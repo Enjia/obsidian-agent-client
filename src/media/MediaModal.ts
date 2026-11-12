@@ -7,6 +7,7 @@ import {
 	SecretComponent,
 	Setting,
 	type App,
+	TFolder,
 } from "obsidian";
 import { extname } from "path";
 import {
@@ -25,6 +26,8 @@ import {
 	type TranscriptionInput,
 	type TranscriptionState,
 } from "./transcription-task";
+
+const MEDIA_OUTPUT_FOLDER = "Resources/转录内容";
 
 interface SummaryChat {
 	agents(): Array<{ id: string; displayName: string }>;
@@ -476,16 +479,37 @@ export class MediaModal extends Modal {
 		}
 	}
 
-	private async saveMaterial(material: Material): Promise<string> {
+	private async ensureOutputFolder(): Promise<void> {
+		const vault = this.app.vault;
+		for (const path of ["Resources", MEDIA_OUTPUT_FOLDER]) {
+			if (vault.getAbstractFileByPath(path) instanceof TFolder) continue;
+			try {
+				await vault.createFolder(path);
+			} catch (error) {
+				if (!(vault.getAbstractFileByPath(path) instanceof TFolder))
+					throw error;
+			}
+		}
+	}
+
+	private availableOutputPath(prefix: string, title: string): string {
 		const name =
-			material.title
+			title
 				.replace(/[\\/:*?"<>|#[\]\r\n]/g, "-")
 				.trim()
 				.slice(0, 100) || "Source material";
-		const base = normalizePath("Media - " + name);
+		const base = normalizePath(
+			`${MEDIA_OUTPUT_FOLDER}/${prefix} - ${name}`,
+		);
 		let path = base + ".md";
 		for (let index = 2; this.app.vault.getAbstractFileByPath(path); index++)
 			path = `${base} (${index}).md`;
+		return path;
+	}
+
+	private async saveMaterial(material: Material): Promise<string> {
+		await this.ensureOutputFolder();
+		const path = this.availableOutputPath("Media", material.title);
 		await this.app.vault.create(path, materialMarkdown(material));
 		return path;
 	}
@@ -500,12 +524,20 @@ export class MediaModal extends Modal {
 		}
 		this.summarizing = true;
 		try {
+			await this.ensureOutputFolder();
 			const notePath =
 				materialMarkdown(material).length > INLINE_SUMMARY_LIMIT
 					? await this.saveMaterial(material)
 					: undefined;
 			if (notePath) new Notice(`Saved source material to ${notePath}`);
-			await this.chat.start(agentId, summaryPrompt(material, notePath));
+			const summaryPath = this.availableOutputPath(
+				"Summary",
+				material.title,
+			);
+			await this.chat.start(
+				agentId,
+				summaryPrompt(material, { notePath, summaryPath }),
+			);
 			this.close();
 		} catch (error) {
 			this.report(error instanceof Error ? error.message : String(error));

@@ -39,8 +39,21 @@ vi.mock("obsidian", () => {
 		}
 		return this.appendChild(element);
 	}
+	class TFolder {}
 	return {
+		TFolder,
+		Notice: class {},
+		normalizePath: (value: string) => value,
 		App: class {
+			vault = {
+				folders: new Map<string, TFolder>(),
+				getAbstractFileByPath: (path: string) =>
+					this.vault.folders.get(path) ?? null,
+				createFolder: vi.fn(async (path: string) => {
+					this.vault.folders.set(path, new TFolder());
+				}),
+				create: vi.fn(async (_path: string, _content: string) => {}),
+			};
 			secretStorage = {
 				getSecret: (id: string) =>
 					id === "bailian-test" ? "test-key" : null,
@@ -313,9 +326,17 @@ it("starts the cloud task with the selected Obsidian secret only after clicking 
 		},
 		"media.json",
 	);
+	const app = new App();
+	const createNote = vi.spyOn(app.vault, "create");
+	const createFolder = vi.spyOn(app.vault, "createFolder");
+	const start = vi.fn();
 	const modal = new MediaModal(
-		new App(),
-		{ agents: () => [], defaultAgentId: () => "", start: vi.fn() },
+		app,
+		{
+			agents: () => [{ id: "agent", displayName: "Agent" }],
+			defaultAgentId: () => "agent",
+			start,
+		},
 		store,
 		new TranscriptionTask(),
 		{ ffmpeg: "ffmpeg", whisper: "whisper", model: "model.bin" },
@@ -344,6 +365,27 @@ it("starts the cloud task with the selected Obsidian secret only after clicking 
 			"test-key",
 			expect.any(AbortSignal),
 			expect.any(Function),
+		);
+		const action = (name: string) =>
+			Array.from(modal.contentEl.querySelectorAll("button")).find(
+				(node) => node.textContent === name,
+			);
+		action("Save as note")?.click();
+		await vi.waitFor(() =>
+			expect(createNote).toHaveBeenCalledWith(
+				"Resources/转录内容/Media - Public episode.md",
+				expect.stringContaining("云端逐字稿"),
+			),
+		);
+		expect(createFolder).toHaveBeenCalledWith("Resources/转录内容");
+		action("Summarize with agent")?.click();
+		await vi.waitFor(() =>
+			expect(start).toHaveBeenCalledWith(
+				"agent",
+				expect.stringContaining(
+					"Resources/转录内容/Summary - Public episode.md",
+				),
+			),
 		);
 	} finally {
 		modal.close();

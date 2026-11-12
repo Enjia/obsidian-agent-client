@@ -55,6 +55,8 @@ function installElementHelpers() {
 it("opens on cached subscriptions and highlights new items with a retry on the failed source", async () => {
 	const reset = installElementHelpers();
 	const box = document.createElement("div");
+	const scrollRegion = document.createElement("div");
+	scrollRegion.append(box);
 	let saved = "";
 	const store = new MediaStore(
 		{
@@ -95,7 +97,7 @@ it("opens on cached subscriptions and highlights new items with a retry on the f
 	const results = {
 		newEntries: new Map<string, Set<string>>(),
 		failures: new Map<string, string>(),
-		expandedSources: new Set<string>(),
+		expandedSources: new Map<string, boolean>(),
 		scrollTop: 0,
 	};
 	const button = (name: string) => {
@@ -106,7 +108,14 @@ it("opens on cached subscriptions and highlights new items with a retry on the f
 		return match!;
 	};
 	try {
-		mountSubscriptions(box, store, open, controller.signal, results);
+		mountSubscriptions(
+			box,
+			store,
+			open,
+			controller.signal,
+			results,
+			scrollRegion,
+		);
 		await vi.waitFor(() =>
 			expect(box.textContent).toContain("Previously seen"),
 		);
@@ -138,14 +147,28 @@ it("opens on cached subscriptions and highlights new items with a retry on the f
 		);
 		expect(mockedRead).toHaveBeenCalledTimes(1);
 		expect(mockedRead.mock.calls[0][0]).toBe(podcast);
+		const blogRow = button("Newly published").closest("details");
+		if (!blogRow) throw new Error("Blog row missing");
+		blogRow.open = false;
+		scrollRegion.scrollTop = 120;
 		button("Episode").click();
 		expect(open).toHaveBeenCalledWith(episode);
 
 		box.replaceChildren();
-		mountSubscriptions(box, store, open, controller.signal, results);
+		scrollRegion.scrollTop = 0;
+		mountSubscriptions(
+			box,
+			store,
+			open,
+			controller.signal,
+			results,
+			scrollRegion,
+		);
 		await vi.waitFor(() =>
 			expect(button("Episode").closest("details")?.open).toBe(true),
 		);
+		expect(button("Newly published").closest("details")?.open).toBe(false);
+		expect(scrollRegion.scrollTop).toBe(120);
 		await vi.waitFor(() =>
 			expect(
 				box.querySelector(".agent-client-media-subscription-new")

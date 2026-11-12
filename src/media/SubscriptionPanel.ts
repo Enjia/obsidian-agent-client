@@ -7,7 +7,7 @@ import { siteIs, type SourceLink } from "./source-reader";
 interface SubscriptionCheckResults {
 	newEntries: Map<string, Set<string>>;
 	failures: Map<string, string>;
-	expandedSources: Set<string>;
+	expandedSources: Map<string, boolean>;
 	scrollTop: number;
 }
 
@@ -16,7 +16,7 @@ export class SubscriptionModal extends Modal {
 	private readonly results: SubscriptionCheckResults = {
 		newEntries: new Map(),
 		failures: new Map(),
-		expandedSources: new Set(),
+		expandedSources: new Map(),
 		scrollTop: 0,
 	};
 
@@ -40,6 +40,7 @@ export class SubscriptionModal extends Modal {
 			},
 			this.view.signal,
 			this.results,
+			this.modalEl,
 		);
 	}
 
@@ -77,6 +78,7 @@ export function mountSubscriptions(
 	openEntry: (link: SourceLink) => void,
 	signal: AbortSignal,
 	state: SubscriptionCheckResults,
+	scrollRegion = container,
 ): void {
 	const { newEntries, failures, expandedSources } = state;
 	const section = container.createDiv({
@@ -115,6 +117,7 @@ export function mountSubscriptions(
 	const status = section.createDiv({ attr: { role: "status" } });
 	const list = section.createDiv();
 	const displayed = new Map<string, HTMLDetailsElement>();
+	const revealAfterCheck = new Set<string>();
 	let busy = false;
 
 	const read = (url: string) =>
@@ -124,10 +127,9 @@ export function mountSubscriptions(
 		});
 	const savePosition = () => {
 		for (const [url, details] of displayed) {
-			if (details.open) expandedSources.add(url);
-			else expandedSources.delete(url);
+			expandedSources.set(url, details.open);
 		}
-		state.scrollTop = container.scrollTop;
+		state.scrollTop = scrollRegion.scrollTop;
 	};
 	const render = (subscriptions: Subscription[]) => {
 		if (signal.aborted) return;
@@ -145,8 +147,9 @@ export function mountSubscriptions(
 			const details = list.createEl("details");
 			displayed.set(source.url, details);
 			details.open =
-				expandedSources.has(source.url) ||
-				Boolean(latest?.size || failure);
+				revealAfterCheck.has(source.url) ||
+				(expandedSources.get(source.url) ??
+					Boolean(latest?.size || failure));
 			const heading = details.createEl("summary");
 			const { icon, label } = sourceIcon(source);
 			const glyph = heading.createSpan({
@@ -218,7 +221,8 @@ export function mountSubscriptions(
 						}),
 				);
 		}
-		container.scrollTop = state.scrollTop;
+		revealAfterCheck.clear();
+		scrollRegion.scrollTop = state.scrollTop;
 	};
 
 	const check = async (sources: Subscription[]): Promise<string> => {
@@ -236,9 +240,11 @@ export function mountSubscriptions(
 					new Set(updated.map((entry) => entry.id)),
 				);
 				failures.delete(source.url);
+				if (updated.length) revealAfterCheck.add(source.url);
 				count += updated.length;
 			} catch (error) {
 				signal.throwIfAborted();
+				revealAfterCheck.add(source.url);
 				failures.set(
 					source.url,
 					error instanceof Error ? error.message : String(error),

@@ -1,3 +1,4 @@
+import { Platform } from "obsidian";
 import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { mkdtemp, rm } from "fs/promises";
@@ -38,13 +39,29 @@ export const runMediaTool: RunTool = (command, args, signal, timeoutMs) => {
 			},
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
+			detached: !Platform.isWin,
 		});
 		let stdout = "";
 		let stderr = "";
 		let failure: Error | undefined;
 		const stop = (error: Error) => {
-			failure ??= error;
-			child.kill("SIGKILL");
+			if (failure) return;
+			failure = error;
+			if (!child.pid) return;
+			try {
+				if (Platform.isWin) {
+					const killer = spawn(
+						"taskkill",
+						["/PID", String(child.pid), "/T", "/F"],
+						{ stdio: "ignore", windowsHide: true },
+					);
+					killer.once("error", () => child.kill("SIGKILL"));
+				} else {
+					process.kill(-child.pid, "SIGKILL");
+				}
+			} catch {
+				child.kill("SIGKILL");
+			}
 		};
 		const abort = () => stop(new Error("Operation cancelled."));
 		const timer = setTimeout(

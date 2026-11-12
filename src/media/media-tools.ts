@@ -105,3 +105,7 @@ export async function withMediaDirectory<T>(
 		await rm(directory, { recursive: true, force: true });
 	}
 }
+
+export function videoToolArgs(): string[] {
+	return ["--ignore-config", "--js-runtimes", "node", "--no-warnings"];
+}

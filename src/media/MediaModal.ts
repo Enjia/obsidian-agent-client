@@ -1,26 +1,23 @@
 import type { MediaStore } from "./media-store";
 import { fetchSourceText } from "./source-fetch";
 import { Modal, normalizePath, Notice, Setting, type App } from "obsidian";
-import { writeFile } from "fs/promises";
-import { extname, join } from "path";
+import { extname } from "path";
 import {
 	INLINE_SUMMARY_LIMIT,
 	materialMarkdown,
 	summaryPrompt,
 	type Material,
 } from "./material";
-import {
-	readSource,
-	transcribeSource,
-	type SourceAudio,
-	type SourceLink,
-} from "./source-reader";
-import { withMediaDirectory } from "./media-tools";
+import { readSource, type SourceAudio, type SourceLink } from "./source-reader";
 import {
 	defaultTranscriptionTools,
-	transcribeAudio,
 	type TranscriptionTools,
 } from "./transcription";
+import {
+	type TranscriptionTask,
+	type TranscriptionInput,
+	type TranscriptionState,
+} from "./transcription-task";
 
 interface SummaryChat {
 	agents(): Array<{ id: string; displayName: string }>;
@@ -29,9 +26,11 @@ interface SummaryChat {
 }
 
 export class MediaModal extends Modal {
-	private job?: AbortController;
+	private readJob?: AbortController;
 	private view?: AbortController;
-	private pendingSource?: { link: SourceLink; back?: () => void };
+	private pendingSource?: { link?: SourceLink; back?: () => void };
+	private unsubscribeTask?: () => void;
+	private followingTask = false;
 	private recorder?: MediaRecorder;
 	private stream?: MediaStream;
 	private microphoneRequest = false;
@@ -50,12 +49,13 @@ export class MediaModal extends Modal {
 		app: App,
 		private chat: SummaryChat,
 		private store: MediaStore,
+		private transcription: TranscriptionTask,
 		private tools: TranscriptionTools = defaultTranscriptionTools(),
 	) {
 		super(app);
 	}
 
-	openSource(link: SourceLink, back?: () => void): void {
+	openSource(link?: SourceLink, back?: () => void): void {
 		this.pendingSource = { link, back };
 		this.open();
 	}
@@ -69,8 +69,12 @@ export class MediaModal extends Modal {
 		this.pendingSource = undefined;
 		const source = pending?.link;
 		const back = pending?.back;
+		const task = this.transcription.current;
+		this.followingTask = Boolean(
+			task && (!source || source.url === task.source),
+		);
 		this.pendingTranscription = undefined;
-		if (source) this.material = undefined;
+		if (source || this.followingTask) this.material = undefined;
 		if (back) {
 			this.contentEl
 				.createEl("button", {
@@ -91,8 +95,12 @@ export class MediaModal extends Modal {
 			.addText((text) => {
 				this.sourceInput = text
 					.setPlaceholder("Source URL")
-					.setValue(source?.url ?? "").inputEl;
+					.setValue(
+						source?.url ??
+							(this.followingTask ? (task?.source ?? "") : ""),
+					).inputEl;
 				this.sourceInput.addEventListener("input", () => {
+					this.followingTask = false;
 					this.clearSourceResult();
 					this.report("");
 				});
@@ -123,13 +131,15 @@ export class MediaModal extends Modal {
 						this.tools.model = model;
 						input.value = model;
 					})
-					.catch((error: unknown) =>
-						this.report(
-							error instanceof Error
-								? error.message
-								: String(error),
-						),
-					);
+					.catch((error: unknown) => {
+						if (!view.signal.aborted) {
+							this.report(
+								error instanceof Error
+									? error.message
+									: String(error),
+							);
+						}
+					});
 				input.addEventListener("change", () => {
 					this.tools.model =
 						input.value.trim() || defaultTranscriptionTools().model;
@@ -158,15 +168,22 @@ export class MediaModal extends Modal {
 		file.addEventListener("change", () => {
 			const input = file.files?.[0];
 			file.value = "";
-			if (input)
-				void this.transcribe(input, input.name, extname(input.name));
+			if (input) {
+				this.startTranscription({
+					kind: "file",
+					file: input,
+					title: input.name,
+					extension: extname(input.name),
+				});
+			}
 		});
 		const record = controls.createEl("button", { text: "Record" });
 		record.addEventListener("click", () => void this.record(record));
 		controls
 			.createEl("button", { text: "Cancel task" })
 			.addEventListener("click", () => {
-				this.job?.abort();
+				this.readJob?.abort();
+				if (this.followingTask) this.transcription.cancel();
 				if (this.recorder || this.microphoneRequest) {
 					this.discardRecording = true;
 					if (this.recorder?.state === "recording")
@@ -183,15 +200,7 @@ export class MediaModal extends Modal {
 		this.transcribeButton.addEventListener("click", () => {
 			const audio = this.pendingTranscription;
 			if (!audio) return;
-			void this.run((signal) =>
-				transcribeSource(audio, {
-					tools: this.tools,
-					signal,
-					progress: (status) => {
-						if (!signal.aborted) this.report(status);
-					},
-				}),
-			);
+			this.startTranscription({ kind: "source", audio });
 		});
 		this.preview = this.contentEl.createEl("textarea", {
 			cls: "agent-client-media-preview",
@@ -221,15 +230,20 @@ export class MediaModal extends Modal {
 					.setCta()
 					.onClick(() => void this.summarize()),
 			);
-		if (source) void this.readLink(source);
+		this.unsubscribeTask = this.transcription.subscribe((state) =>
+			this.renderTask(state),
+		);
+		if (source && !this.followingTask) void this.readLink(source);
 	}
 
 	onClose(): void {
 		this.closed = true;
 		this.view?.abort();
 		this.discardRecording = true;
-		this.job?.abort();
-		this.job = undefined;
+		this.unsubscribeTask?.();
+		this.unsubscribeTask = undefined;
+		this.readJob?.abort();
+		this.readJob = undefined;
 		if (this.recorder?.state === "recording") this.recorder.stop();
 		this.stream?.getTracks().forEach((track) => track.stop());
 		this.contentEl.empty();
@@ -240,7 +254,11 @@ export class MediaModal extends Modal {
 			this.recorder.stop();
 			return;
 		}
-		if (this.job || this.recorder || this.microphoneRequest) return;
+		if (this.readJob || this.recorder || this.microphoneRequest) return;
+		if (this.transcription.current?.phase === "running") {
+			this.report("已有转录正在进行。");
+			return;
+		}
 		this.microphoneRequest = true;
 		this.discardRecording = false;
 		try {
@@ -274,14 +292,17 @@ export class MediaModal extends Modal {
 						: recorder.mimeType.includes("ogg")
 							? ".ogg"
 							: ".webm";
-					void this.transcribe(
-						blob,
-						"Recording " + new Date().toLocaleString(),
-						suffix,
-					);
+					this.startTranscription({
+						kind: "file",
+						file: blob,
+						title: "Recording " + new Date().toLocaleString(),
+						extension: suffix,
+					});
 				}
 			};
 			recorder.start();
+			this.followingTask = false;
+			this.clearSourceResult();
 			button.setText("Stop and transcribe");
 			this.report("Recording…");
 		} catch (error) {
@@ -298,93 +319,89 @@ export class MediaModal extends Modal {
 		}
 	}
 
-	private async transcribe(
-		file: Blob,
-		title: string,
-		extension: string,
-	): Promise<void> {
-		await this.run((signal) =>
-			withMediaDirectory(async (directory) => {
-				const path = join(directory, "input" + extension);
-				await writeFile(
-					path,
-					new Uint8Array(await file.arrayBuffer()),
-					{ signal },
-				);
-				return transcribeAudio({
-					path,
-					title,
-					tools: this.tools,
-					signal,
-					progress: (status) => {
-						if (!signal.aborted) this.report(status);
-					},
-				});
-			}),
-		);
+	private startTranscription(input: TranscriptionInput): void {
+		if (this.readJob || this.recorder || this.microphoneRequest) {
+			this.report("Finish the current recording or task first.");
+			return;
+		}
+		if (!this.transcription.start(input, this.tools)) {
+			this.report("已有转录正在进行。");
+			return;
+		}
+		this.clearSourceResult();
+		this.followingTask = true;
+		this.renderTask(this.transcription.current);
 	}
 
 	private async readLink(link: SourceLink): Promise<void> {
-		await this.run((signal) => {
-			this.clearSourceResult();
-			return readSource(link, {
+		if (this.readJob || this.recorder || this.microphoneRequest) {
+			this.report("Finish the current recording or task first.");
+			return;
+		}
+		this.followingTask = false;
+		this.clearSourceResult();
+		const job = new AbortController();
+		const { signal } = job;
+		this.readJob = job;
+		this.sourceInput.disabled = true;
+		try {
+			const result = await readSource(link, {
 				get: (url, headers) => fetchSourceText(url, headers, signal),
 				signal,
 				progress: (status) => {
 					if (!signal.aborted) this.report(status);
 				},
 			});
-		});
-	}
-
-	private clearSourceResult(): void {
-		this.material = undefined;
-		this.pendingTranscription = undefined;
-		this.transcribeButton.hidden = true;
-		this.preview.value = "";
-	}
-
-	private async run(
-		operation: (signal: AbortSignal) => Promise<Material | SourceAudio>,
-	): Promise<void> {
-		if (this.job || this.recorder || this.microphoneRequest) {
-			this.report("Finish the current recording or task first.");
-			return;
-		}
-		const job = new AbortController();
-		this.job = job;
-		this.sourceInput.disabled = this.transcribeButton.disabled = true;
-		try {
-			const result = await operation(job.signal);
-			if (job.signal.aborted || this.closed) return;
+			if (signal.aborted) return;
 			if ("audioUrl" in result) {
 				this.pendingTranscription = result;
-				this.transcribeButton.hidden = false;
 				this.report(
 					`${result.title} · 未找到可直接使用的文字。开始本地转录后将下载音频。`,
 				);
 			} else {
-				this.pendingTranscription = undefined;
-				this.transcribeButton.hidden = true;
-				this.material = result;
-				this.preview.value = materialMarkdown(result);
+				this.showMaterial(result);
 				this.report("Ready to preview or save.");
 			}
 		} catch (error) {
-			if (this.job !== job) return;
+			if (this.readJob !== job) return;
 			this.report(
-				job.signal.aborted
+				signal.aborted
 					? "Task cancelled."
 					: error instanceof Error
 						? error.message
 						: String(error),
 			);
 		} finally {
-			if (this.job === job) {
-				this.job = undefined;
-				this.sourceInput.disabled =
-					this.transcribeButton.disabled = false;
+			if (this.readJob === job) {
+				this.readJob = undefined;
+				this.sourceInput.disabled = false;
+				this.renderTask(this.transcription.current);
 			}
+		}
+	}
+
+	private clearSourceResult(): void {
+		this.pendingTranscription = undefined;
+		this.transcribeButton.hidden = true;
+		this.showMaterial(undefined);
+	}
+
+	private showMaterial(material: Material | undefined): void {
+		this.material = material;
+		this.preview.value = material ? materialMarkdown(material) : "";
+	}
+
+	private renderTask(state: TranscriptionState | undefined): void {
+		this.transcribeButton.hidden = !this.pendingTranscription;
+		this.transcribeButton.disabled = state?.phase === "running";
+		this.transcribeButton.title =
+			state?.phase === "running" ? "已有转录正在进行。" : "";
+		if (!this.followingTask || !state) return;
+		if (state.phase === "ready") {
+			this.showMaterial(state.material);
+			this.report(`${state.title} · 转录完成，可以预览、保存或摘要。`);
+		} else {
+			this.report(`${state.title} · ${state.detail}`);
 		}
 	}
 

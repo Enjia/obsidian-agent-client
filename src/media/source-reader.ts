@@ -1,18 +1,12 @@
 import { Readability } from "@mozilla/readability";
-import { join } from "path";
 import { parseCaptionSegments, plainCaptionText } from "./captions";
 import type { Material } from "./material";
 import {
 	resolveMediaTool,
 	runMediaTool,
-	withMediaDirectory,
+	videoToolArgs,
 	type RunTool,
 } from "./media-tools";
-import {
-	defaultTranscriptionTools,
-	transcribeAudio,
-	type TranscriptionTools,
-} from "./transcription";
 
 export interface SourceLink {
 	url: string;
@@ -57,10 +51,6 @@ export function webUrl(input: string, base?: string): URL {
 
 export function siteIs(url: URL, domain: string): boolean {
 	return url.hostname === domain || url.hostname.endsWith("." + domain);
-}
-
-export function videoToolArgs(): string[] {
-	return ["--ignore-config", "--js-runtimes", "node", "--no-warnings"];
 }
 
 function isVideoLink(url: URL): boolean {
@@ -152,52 +142,6 @@ function article(doc: Document, url: string): Material {
 		text,
 		language: data.lang ?? undefined,
 	};
-}
-
-export async function transcribeSource(
-	{ audioUrl, source, title }: SourceAudio,
-	{
-		signal,
-		run = runMediaTool,
-		tools = defaultTranscriptionTools(),
-		progress,
-	}: MediaTaskOptions & { tools?: TranscriptionTools },
-): Promise<Material> {
-	signal.throwIfAborted();
-	return withMediaDirectory(async (directory) => {
-		progress?.("Downloading audio…");
-		const { stdout } = await run(
-			resolveMediaTool("yt-dlp"),
-			[
-				...videoToolArgs(),
-				"--no-playlist",
-				"--no-progress",
-				"--no-simulate",
-				"-f",
-				"bestaudio/best",
-				"--print",
-				"after_move:filepath",
-				"-o",
-				join(directory, "audio.%(ext)s"),
-				"--",
-				audioUrl,
-			],
-			signal,
-			30 * 60_000,
-		);
-		const path = stdout.trim().split(/\r?\n/).pop();
-		if (!path)
-			throw new Error("The downloader did not return an audio file.");
-		const material = await transcribeAudio({
-			path,
-			title,
-			tools,
-			signal,
-			run,
-			progress,
-		});
-		return { ...material, source };
-	});
 }
 
 export async function readSource(

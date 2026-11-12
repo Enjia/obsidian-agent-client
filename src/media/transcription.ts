@@ -1,10 +1,12 @@
-import { readFile, stat } from "fs/promises";
+import { readFile, stat, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import type { Material, TranscriptSegment } from "./material";
+import type { SourceAudio } from "./source-reader";
 import {
 	resolveMediaTool,
 	runMediaTool,
+	videoToolArgs,
 	withMediaDirectory,
 	type RunTool,
 } from "./media-tools";
@@ -116,5 +118,75 @@ export async function transcribeAudio({
 			language: result.result?.language,
 			segments,
 		};
+	});
+}
+
+export async function transcribeSource(
+	{ audioUrl, source, title }: SourceAudio,
+	{
+		signal,
+		run = runMediaTool,
+		tools = defaultTranscriptionTools(),
+		progress,
+	}: {
+		signal: AbortSignal;
+		run?: RunTool;
+		tools?: TranscriptionTools;
+		progress?: (status: string) => void;
+	},
+): Promise<Material> {
+	signal.throwIfAborted();
+	return withMediaDirectory(async (directory) => {
+		progress?.("Downloading audio…");
+		const { stdout } = await run(
+			resolveMediaTool("yt-dlp"),
+			[
+				...videoToolArgs(),
+				"--no-playlist",
+				"--no-progress",
+				"--no-simulate",
+				"-f",
+				"bestaudio/best",
+				"--print",
+				"after_move:filepath",
+				"-o",
+				join(directory, "audio.%(ext)s"),
+				"--",
+				audioUrl,
+			],
+			signal,
+			30 * 60_000,
+		);
+		const path = stdout.trim().split(/\r?\n/).pop();
+		if (!path)
+			throw new Error("The downloader did not return an audio file.");
+		const material = await transcribeAudio({
+			path,
+			title,
+			tools,
+			signal,
+			run,
+			progress,
+		});
+		return { ...material, source };
+	});
+}
+
+export async function transcribeBlob(
+	file: Blob,
+	title: string,
+	extension: string,
+	options: {
+		tools: TranscriptionTools;
+		signal: AbortSignal;
+		progress?: (status: string) => void;
+	},
+): Promise<Material> {
+	return withMediaDirectory(async (directory) => {
+		const path = join(directory, "input" + extension);
+		await writeFile(path, new Uint8Array(await file.arrayBuffer()), {
+			signal: options.signal,
+		});
+		return transcribeAudio({ path, title, ...options });
 	});
 }

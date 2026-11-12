@@ -2,6 +2,7 @@ import { MediaModal } from "./media/MediaModal";
 import { SubscriptionModal } from "./media/SubscriptionPanel";
 import type { SourceLink } from "./media/source-reader";
 import { MediaStore } from "./media/media-store";
+import { TranscriptionTask } from "./media/transcription-task";
 import {
 	Plugin,
 	WorkspaceLeaf,
@@ -277,6 +278,7 @@ export default class AgentClientPlugin extends Plugin {
 	private mediaModal?: MediaModal;
 	private subscriptionModal?: SubscriptionModal;
 	private mediaStore!: MediaStore;
+	private readonly transcriptionTask = new TranscriptionTask();
 	/** Counter for generating unique floating chat instance IDs */
 	private floatingChatCounter = 0;
 	/** Guards against concurrent embed-id injection for the same block. */
@@ -498,6 +500,7 @@ export default class AgentClientPlugin extends Plugin {
 		// Note: We don't wait for disconnect to complete to avoid blocking quit
 		this.registerEvent(
 			this.app.workspace.on("quit", () => {
+				this.transcriptionTask.cancel();
 				// Fire and forget - don't block Obsidian from quitting
 				for (const [viewId, client] of this._acpClients) {
 					client.disconnect().catch((error) => {
@@ -541,9 +544,9 @@ export default class AgentClientPlugin extends Plugin {
 					}),
 			},
 			this.mediaStore,
+			this.transcriptionTask,
 		);
-		if (source) this.mediaModal.openSource(source, back);
-		else this.mediaModal.open();
+		this.mediaModal.openSource(source, back);
 	}
 
 	openSubscriptions(restorePosition = false): void {
@@ -555,10 +558,19 @@ export default class AgentClientPlugin extends Plugin {
 					this.openSubscriptions(true),
 				),
 		);
-		this.subscriptionModal.show(restorePosition);
+		this.subscriptionModal.show(
+			restorePosition,
+			this.transcriptionTask.current
+				? () =>
+						this.openMediaIntake(undefined, () =>
+							this.openSubscriptions(true),
+						)
+				: undefined,
+		);
 	}
 
 	onunload() {
+		this.transcriptionTask.cancel();
 		this.mediaModal?.close();
 		this.mediaModal = undefined;
 		this.subscriptionModal?.close();

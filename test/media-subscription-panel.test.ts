@@ -334,3 +334,34 @@ it("starts with collapsed sources from the toolbar and restores the position onl
 		reset();
 	}
 });
+
+it("offers a separate route to the latest transcription when the plugin has a task", async () => {
+	const reset = installElementHelpers();
+	const store = new MediaStore(
+		{
+			exists: async () => false,
+			read: async () => "",
+			write: async () => {},
+		},
+		"media.json",
+	);
+	const modal = new SubscriptionModal(new App(), store, vi.fn());
+	const button = () =>
+		Array.from(modal.contentEl.querySelectorAll("button")).find(
+			(element) => element.textContent === "查看转录",
+		);
+	const resume = vi.fn();
+	try {
+		modal.show();
+		expect(button()).toBeUndefined();
+		modal.close();
+		modal.show(false, resume);
+		expect(button()).toBeDefined();
+		button()?.click();
+		expect(resume).toHaveBeenCalledOnce();
+		expect(modal.contentEl.children.length).toBe(0);
+	} finally {
+		modal.close();
+		reset();
+	}
+});

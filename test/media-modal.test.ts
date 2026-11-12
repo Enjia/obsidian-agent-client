@@ -3,10 +3,11 @@ import { App } from "obsidian";
 import { expect, it, vi } from "vitest";
 import { MediaModal } from "../src/media/MediaModal";
 import { MediaStore } from "../src/media/media-store";
-import { transcribeSource } from "../src/media/source-reader";
+import { transcribeSource } from "../src/media/transcription";
+import { TranscriptionTask } from "../src/media/transcription-task";
 
-vi.mock("../src/media/source-reader", async (importOriginal) => ({
-	...(await importOriginal<typeof import("../src/media/source-reader")>()),
+vi.mock("../src/media/transcription", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../src/media/transcription")>()),
 	transcribeSource: vi.fn(),
 }));
 
@@ -134,7 +135,7 @@ vi.mock("obsidian", () => {
 	};
 });
 
-it("waits for manual confirmation, cancels on return and clears the old preview for the next episode", async () => {
+it("waits for confirmation, keeps processing after closing, and reopens the latest progress", async () => {
 	const store = new MediaStore(
 		{
 			exists: async () => false,
@@ -143,10 +144,12 @@ it("waits for manual confirmation, cancels on return and clears the old preview 
 		},
 		"media.json",
 	);
+	const task = new TranscriptionTask();
 	const modal = new MediaModal(
 		new App(),
 		{ agents: () => [], defaultAgentId: () => "", start: vi.fn() },
 		store,
+		task,
 		{ ffmpeg: "ffmpeg", whisper: "whisper", model: "model.bin" },
 	);
 	const audio = {
@@ -176,22 +179,57 @@ it("waits for manual confirmation, cancels on return and clears the old preview 
 	expect(back).toHaveBeenCalledOnce();
 	expect(transcribe).not.toHaveBeenCalled();
 
-	transcribe.mockResolvedValueOnce({
-		title: audio.title,
-		method: "local-transcription",
-		text: "First transcript",
+	let reportProgress: ((status: string) => void) | undefined;
+	let taskSignal: AbortSignal | undefined;
+	let finish: (() => void) | undefined;
+	transcribe.mockImplementationOnce((_audio, { signal, progress }) => {
+		taskSignal = signal;
+		reportProgress = progress;
+		return new Promise((resolve) => {
+			finish = () =>
+				resolve({
+					title: audio.title,
+					method: "local-transcription",
+					text: "First transcript",
+				});
+		});
 	});
 	modal.openSource(audio, back);
 	await confirm();
-	await vi.waitFor(() =>
-		expect(modal.contentEl.querySelector("textarea")?.value).toContain(
-			"First transcript",
-		),
-	);
 	expect(transcribe).toHaveBeenCalledOnce();
+	expect(taskSignal?.aborted).toBe(false);
+
+	button("← 返回订阅").click();
+	expect(taskSignal?.aborted).toBe(false);
+	expect(back).toHaveBeenCalledTimes(2);
+	reportProgress?.("Transcribing locally…");
+	const rejected = task.start(
+		{
+			kind: "source",
+			audio: {
+				title: "Second",
+				source: "https://example.org/second",
+				audioUrl: "https://example.org/second.mp3",
+			},
+		},
+		{ ffmpeg: "ffmpeg", whisper: "whisper", model: "model.bin" },
+	);
+	expect(rejected).toBe(false);
+
+	modal.openSource(undefined, back);
+	expect(
+		modal.contentEl.querySelector('[role="status"]')?.textContent,
+	).toContain("Episode One · Transcribing locally…");
+	expect(button("开始本地转录").hidden).toBe(true);
+	modal.close();
+	finish?.();
+	await vi.waitFor(() => expect(task.current?.phase).toBe("ready"));
+	modal.openSource();
+	expect(modal.contentEl.querySelector("textarea")?.value).toContain(
+		"First transcript",
+	);
 	modal.close();
 
-	let taskSignal: AbortSignal | undefined;
 	transcribe.mockImplementationOnce((_audio, { signal }) => {
 		taskSignal = signal;
 		return new Promise((_resolve, reject) => {
@@ -200,11 +238,23 @@ it("waits for manual confirmation, cancels on return and clears the old preview 
 			);
 		});
 	});
-	modal.openSource({ ...audio, title: "Episode Two" }, back);
+	modal.openSource(
+		{
+			...audio,
+			title: "Episode Two",
+			url: "https://example.org/second",
+		},
+		back,
+	);
 	expect(modal.contentEl.querySelector("textarea")?.value).toBe("");
 	await confirm();
 	expect(taskSignal?.aborted).toBe(false);
-	button("← 返回订阅").click();
+	button("Cancel task").click();
 	expect(taskSignal?.aborted).toBe(true);
-	expect(back).toHaveBeenCalledTimes(2);
+	await vi.waitFor(() =>
+		expect(
+			modal.contentEl.querySelector('[role="status"]')?.textContent,
+		).toContain("Episode Two · 已取消转录。"),
+	);
+	modal.close();
 });

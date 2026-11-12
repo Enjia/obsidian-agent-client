@@ -18,7 +18,10 @@ interface SubscriptionCheckResults {
 
 export class SubscriptionModal extends Modal {
 	private view?: AbortController;
-	private restorePosition = false;
+	private nextOpen?: {
+		restorePosition: boolean;
+		openTranscription?: () => void;
+	};
 	private readonly results: SubscriptionCheckResults = {
 		newEntries: new Map(),
 		failures: new Map(),
@@ -36,19 +39,20 @@ export class SubscriptionModal extends Modal {
 		super(app);
 	}
 
-	show(restorePosition = false): void {
-		this.restorePosition = restorePosition;
+	show(restorePosition = false, openTranscription?: () => void): void {
+		this.nextOpen = { restorePosition, openTranscription };
 		this.open();
 	}
 
 	onOpen(): void {
-		if (!this.restorePosition) {
+		const options = this.nextOpen;
+		this.nextOpen = undefined;
+		if (!options?.restorePosition) {
 			this.results.expandedSources.clear();
 			this.results.visibleCounts.clear();
 			this.results.historyNotices.clear();
 			this.results.scrollTop = 0;
 		}
-		this.restorePosition = false;
 		this.setTitle("订阅");
 		this.view = new AbortController();
 		mountSubscriptions(
@@ -61,6 +65,11 @@ export class SubscriptionModal extends Modal {
 			this.view.signal,
 			this.results,
 			this.modalEl,
+			options?.openTranscription &&
+				(() => {
+					this.close();
+					options.openTranscription?.();
+				}),
 		);
 	}
 
@@ -99,6 +108,7 @@ export function mountSubscriptions(
 	signal: AbortSignal,
 	state: SubscriptionCheckResults,
 	scrollRegion = container,
+	openTranscription?: () => void,
 ): void {
 	const {
 		newEntries,
@@ -119,6 +129,17 @@ export function mountSubscriptions(
 		text: "添加订阅",
 		attr: { type: "button", "aria-expanded": "false" },
 	});
+	if (openTranscription) {
+		controls
+			.createEl("button", {
+				text: "查看转录",
+				attr: { type: "button" },
+			})
+			.addEventListener("click", () => {
+				savePosition();
+				openTranscription();
+			});
+	}
 	const form = section.createEl("form");
 	const fields = form.createDiv({ cls: "agent-client-media-controls" });
 	const input = fields.createEl("input", {

@@ -27,12 +27,20 @@ export type FetchSourceText = (
 	headers?: Record<string, string>,
 ) => Promise<string>;
 
-interface ReadOptions {
-	get: FetchSourceText;
+interface MediaTaskOptions {
 	signal: AbortSignal;
-	tools?: TranscriptionTools;
 	run?: RunTool;
 	progress?: (status: string) => void;
+}
+
+interface ReadOptions extends MediaTaskOptions {
+	get: FetchSourceText;
+}
+
+export interface SourceAudio {
+	audioUrl: string;
+	source: string;
+	title: string;
 }
 
 export function webUrl(input: string, base?: string): URL {
@@ -146,17 +154,16 @@ function article(doc: Document, url: string): Material {
 	};
 }
 
-async function downloadAndTranscribe(
-	audioUrl: string,
-	source: string,
-	title: string,
+export async function transcribeSource(
+	{ audioUrl, source, title }: SourceAudio,
 	{
 		signal,
 		run = runMediaTool,
 		tools = defaultTranscriptionTools(),
 		progress,
-	}: ReadOptions,
+	}: MediaTaskOptions & { tools?: TranscriptionTools },
 ): Promise<Material> {
+	signal.throwIfAborted();
 	return withMediaDirectory(async (directory) => {
 		progress?.("Downloading audio…");
 		const { stdout } = await run(
@@ -196,7 +203,7 @@ async function downloadAndTranscribe(
 export async function readSource(
 	link: SourceLink,
 	options: ReadOptions,
-): Promise<Material> {
+): Promise<Material | SourceAudio> {
 	const { signal, get, run = runMediaTool, progress } = options;
 	signal.throwIfAborted();
 	const url = webUrl(link.url);
@@ -222,12 +229,11 @@ export async function readSource(
 	}
 
 	if (link.audioUrl || isMediaFile(url)) {
-		return downloadAndTranscribe(
-			webUrl(link.audioUrl || source, source).href,
+		return {
+			audioUrl: webUrl(link.audioUrl || source, source).href,
 			source,
 			title,
-			options,
-		);
+		};
 	}
 
 	if (isVideoLink(url)) {
@@ -282,12 +288,7 @@ export async function readSource(
 				segments,
 			};
 		}
-		return downloadAndTranscribe(
-			source,
-			source,
-			data.title || title,
-			options,
-		);
+		return { audioUrl: source, source, title: data.title || title };
 	}
 
 	progress?.("Reading source page…");
@@ -300,16 +301,16 @@ export async function readSource(
 		)
 		?.getAttribute("content");
 	if (episodeAudio) {
-		return downloadAndTranscribe(
-			webUrl(episodeAudio, source).href,
+		return {
+			audioUrl: webUrl(episodeAudio, source).href,
 			source,
-			doc
-				.querySelector('meta[property="og:title"]')
-				?.getAttribute("content") ||
+			title:
+				doc
+					.querySelector('meta[property="og:title"]')
+					?.getAttribute("content") ||
 				doc.title ||
 				title,
-			options,
-		);
+		};
 	}
 	if (
 		siteIs(url, "xiaoyuzhoufm.com") &&

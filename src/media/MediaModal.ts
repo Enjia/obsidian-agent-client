@@ -9,7 +9,12 @@ import {
 	summaryPrompt,
 	type Material,
 } from "./material";
-import { readSource, type SourceLink } from "./source-reader";
+import {
+	readSource,
+	transcribeSource,
+	type SourceAudio,
+	type SourceLink,
+} from "./source-reader";
 import { withMediaDirectory } from "./media-tools";
 import {
 	defaultTranscriptionTools,
@@ -33,6 +38,9 @@ export class MediaModal extends Modal {
 	private discardRecording = false;
 	private closed = false;
 	private material?: Material;
+	private pendingTranscription?: SourceAudio;
+	private sourceInput!: HTMLInputElement;
+	private transcribeButton!: HTMLButtonElement;
 	private preview!: HTMLTextAreaElement;
 	private status!: HTMLElement;
 	private summarizing = false;
@@ -61,6 +69,8 @@ export class MediaModal extends Modal {
 		this.pendingSource = undefined;
 		const source = pending?.link;
 		const back = pending?.back;
+		this.pendingTranscription = undefined;
+		if (source) this.material = undefined;
 		if (back) {
 			this.contentEl
 				.createEl("button", {
@@ -72,18 +82,21 @@ export class MediaModal extends Modal {
 					back();
 				});
 		}
-		let sourceInput: HTMLInputElement;
 		const readLink = () => {
-			const url = sourceInput.value.trim();
+			const url = this.sourceInput.value.trim();
 			void this.readLink(source?.url === url ? source : { url });
 		};
 		new Setting(this.contentEl)
 			.setName("Article, podcast or video link")
 			.addText((text) => {
-				sourceInput = text
+				this.sourceInput = text
 					.setPlaceholder("Source URL")
 					.setValue(source?.url ?? "").inputEl;
-				sourceInput.addEventListener("keydown", (event) => {
+				this.sourceInput.addEventListener("input", () => {
+					this.clearSourceResult();
+					this.report("");
+				});
+				this.sourceInput.addEventListener("keydown", (event) => {
 					if (event.key === "Enter") {
 						event.preventDefault();
 						readLink();
@@ -162,6 +175,24 @@ export class MediaModal extends Modal {
 				}
 			});
 		this.status = this.contentEl.createDiv({ attr: { role: "status" } });
+		this.transcribeButton = this.contentEl.createEl("button", {
+			text: "开始本地转录",
+			attr: { type: "button" },
+		});
+		this.transcribeButton.hidden = true;
+		this.transcribeButton.addEventListener("click", () => {
+			const audio = this.pendingTranscription;
+			if (!audio) return;
+			void this.run((signal) =>
+				transcribeSource(audio, {
+					tools: this.tools,
+					signal,
+					progress: (status) => {
+						if (!signal.aborted) this.report(status);
+					},
+				}),
+			);
+		});
 		this.preview = this.contentEl.createEl("textarea", {
 			cls: "agent-client-media-preview",
 			attr: { readonly: "", "aria-label": "Source material preview" },
@@ -294,20 +325,27 @@ export class MediaModal extends Modal {
 	}
 
 	private async readLink(link: SourceLink): Promise<void> {
-		await this.run((signal) =>
-			readSource(link, {
+		await this.run((signal) => {
+			this.clearSourceResult();
+			return readSource(link, {
 				get: (url, headers) => fetchSourceText(url, headers, signal),
-				tools: this.tools,
 				signal,
 				progress: (status) => {
 					if (!signal.aborted) this.report(status);
 				},
-			}),
-		);
+			});
+		});
+	}
+
+	private clearSourceResult(): void {
+		this.material = undefined;
+		this.pendingTranscription = undefined;
+		this.transcribeButton.hidden = true;
+		this.preview.value = "";
 	}
 
 	private async run(
-		operation: (signal: AbortSignal) => Promise<Material>,
+		operation: (signal: AbortSignal) => Promise<Material | SourceAudio>,
 	): Promise<void> {
 		if (this.job || this.recorder || this.microphoneRequest) {
 			this.report("Finish the current recording or task first.");
@@ -315,12 +353,23 @@ export class MediaModal extends Modal {
 		}
 		const job = new AbortController();
 		this.job = job;
+		this.sourceInput.disabled = this.transcribeButton.disabled = true;
 		try {
-			const material = await operation(job.signal);
+			const result = await operation(job.signal);
 			if (job.signal.aborted || this.closed) return;
-			this.material = material;
-			this.preview.value = materialMarkdown(material);
-			this.report("Ready to preview or save.");
+			if ("audioUrl" in result) {
+				this.pendingTranscription = result;
+				this.transcribeButton.hidden = false;
+				this.report(
+					`${result.title} · 未找到可直接使用的文字。开始本地转录后将下载音频。`,
+				);
+			} else {
+				this.pendingTranscription = undefined;
+				this.transcribeButton.hidden = true;
+				this.material = result;
+				this.preview.value = materialMarkdown(result);
+				this.report("Ready to preview or save.");
+			}
 		} catch (error) {
 			if (this.job !== job) return;
 			this.report(
@@ -331,7 +380,11 @@ export class MediaModal extends Modal {
 						: String(error),
 			);
 		} finally {
-			if (this.job === job) this.job = undefined;
+			if (this.job === job) {
+				this.job = undefined;
+				this.sourceInput.disabled =
+					this.transcribeButton.disabled = false;
+			}
 		}
 	}
 

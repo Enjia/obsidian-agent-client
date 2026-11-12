@@ -24,8 +24,7 @@ it("preserves article title, source and separated paragraphs", async () => {
 		source: "https://example.org/article",
 		method: "article",
 	});
-	expect(material.text).toContain(text + "\n\n" + next);
-	expect(material.text).not.toContain("Ignore menu");
+	expect(material).toHaveProperty("text", text + "\n\n" + next);
 });
 
 it("uses published podcast transcripts before opening media tools", async () => {
@@ -185,4 +184,58 @@ it("does not expand vault mentions supplied by an external article", () => {
 	};
 	expect(summaryPrompt(material)).not.toMatch(/@\[\[/);
 	expect(summaryPrompt(material)).toContain("＠[[Private note]]");
+});
+
+it("returns a pending transcription for a podcast enclosure without downloading audio", async () => {
+	const run = vi.fn();
+	const get = vi.fn();
+	const result = await readSource(
+		{
+			url: "https://example.org/episode",
+			title: "Episode",
+			audioUrl: "https://example.org/episode.mp3",
+		},
+		{ signal, get, run },
+	);
+	expect(result).toEqual({
+		source: "https://example.org/episode",
+		title: "Episode",
+		audioUrl: "https://example.org/episode.mp3",
+	});
+	expect(get).not.toHaveBeenCalled();
+	expect(run).not.toHaveBeenCalled();
+});
+
+it("reads an episode page without downloading its public audio", async () => {
+	const run = vi.fn();
+	const result = await readSource(
+		{ url: "https://www.xiaoyuzhoufm.com/episode/example" },
+		{
+			signal,
+			get: async () =>
+				'<meta property="og:title" content="Episode"><meta property="og:audio" content="https://example.org/episode.mp3">',
+			run,
+		},
+	);
+	expect(result).toMatchObject({
+		title: "Episode",
+		audioUrl: "https://example.org/episode.mp3",
+	});
+	expect(run).not.toHaveBeenCalled();
+});
+
+it("stops after checking video captions when none are available", async () => {
+	const url = "https://www.youtube.com/watch?v=example";
+	const run = vi.fn(async () => ({
+		stdout: JSON.stringify({ title: "Video" }),
+		stderr: "",
+	}));
+	const result = await readSource({ url }, { signal, get: vi.fn(), run });
+	expect(result).toEqual({ source: url, title: "Video", audioUrl: url });
+	expect(run).toHaveBeenCalledExactlyOnceWith(
+		expect.any(String),
+		expect.arrayContaining(["--skip-download", url]),
+		signal,
+		expect.any(Number),
+	);
 });

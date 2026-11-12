@@ -293,25 +293,7 @@ export default class AgentClientPlugin extends Plugin {
 		this.addCommand({
 			id: "open-media-intake",
 			name: "Read, transcribe and summarize media",
-			callback: () => {
-				this.mediaModal ??= new MediaModal(
-					this.app,
-					{
-						agents: () => this.getAvailableAgents(),
-						defaultAgentId: () => this.settings.defaultAgentId,
-						start: (agentId, prompt) =>
-							this.runPromptInChat({
-								agentId,
-								prompt,
-								autoSend: true,
-								omitActiveNote: true,
-								viewType: "right-pane",
-							}),
-					},
-					this.mediaStore,
-				);
-				this.mediaModal.open();
-			},
+			callback: () => this.openMediaIntake(),
 		});
 
 		// Initialize settings store
@@ -505,6 +487,26 @@ export default class AgentClientPlugin extends Plugin {
 				}
 			}),
 		);
+	}
+
+	openMediaIntake(): void {
+		this.mediaModal ??= new MediaModal(
+			this.app,
+			{
+				agents: () => this.getAvailableAgents(),
+				defaultAgentId: () => this.settings.defaultAgentId,
+				start: (agentId, prompt) =>
+					this.runPromptInChat({
+						agentId,
+						prompt,
+						autoSend: true,
+						omitActiveNote: true,
+						viewType: "right-pane",
+					}),
+			},
+			this.mediaStore,
+		);
+		this.mediaModal.open();
 	}
 
 	onunload() {

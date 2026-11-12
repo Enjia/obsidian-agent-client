@@ -1,7 +1,7 @@
 import * as React from "react";
 const { useRef, useEffect, useMemo } = React;
 import { setIcon, DropdownComponent } from "obsidian";
-import { HeaderButton } from "./shared/IconButton";
+import { HeaderButton, LucideIcon } from "./shared/IconButton";
 import type { AgentDisplayInfo } from "../services/session-helpers";
 
 /** Stable empty list for the pinned-agent case (no switchable agents). */
@@ -56,6 +56,7 @@ export interface SidebarHeaderProps {
 	onShowMenu: (e: React.MouseEvent<HTMLDivElement>) => void;
 	/** Callback to open session history */
 	onOpenHistory?: () => void;
+	onOpenMedia: () => void;
 }
 
 /**
@@ -165,6 +166,7 @@ function SidebarHeader({
 	onExportChat,
 	onShowMenu,
 	onOpenHistory,
+	onOpenMedia,
 }: SidebarHeaderProps) {
 	return (
 		<div className="nav-header agent-client-chat-view-header">
@@ -194,6 +196,15 @@ function SidebarHeader({
 					label="Export chat to Markdown"
 					onClick={onExportChat}
 				/>
+				<button
+					type="button"
+					className="clickable-icon nav-action-button"
+					aria-label="外部资源转换"
+					title="外部资源转换"
+					onClick={onOpenMedia}
+				>
+					<LucideIcon name="file-input" />
+				</button>
 				<NavActionButton
 					icon="more-vertical"
 					label="More"

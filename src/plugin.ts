@@ -492,7 +492,7 @@ export default class AgentClientPlugin extends Plugin {
 		);
 	}
 
-	openMediaIntake(source?: SourceLink): void {
+	openMediaIntake(source?: SourceLink, back?: () => void): void {
 		this.mediaModal ??= new MediaModal(
 			this.app,
 			{
@@ -509,7 +509,7 @@ export default class AgentClientPlugin extends Plugin {
 			},
 			this.mediaStore,
 		);
-		if (source) this.mediaModal.openSource(source);
+		if (source) this.mediaModal.openSource(source, back);
 		else this.mediaModal.open();
 	}
 
@@ -517,7 +517,8 @@ export default class AgentClientPlugin extends Plugin {
 		this.subscriptionModal ??= new SubscriptionModal(
 			this.app,
 			this.mediaStore,
-			(source) => this.openMediaIntake(source),
+			(source) =>
+				this.openMediaIntake(source, () => this.openSubscriptions()),
 		);
 		this.subscriptionModal.open();
 	}

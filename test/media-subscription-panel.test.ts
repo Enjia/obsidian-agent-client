@@ -95,6 +95,8 @@ it("opens on cached subscriptions and highlights new items with a retry on the f
 	const results = {
 		newEntries: new Map<string, Set<string>>(),
 		failures: new Map<string, string>(),
+		expandedSources: new Set<string>(),
+		scrollTop: 0,
 	};
 	const button = (name: string) => {
 		const match = [...box.querySelectorAll("button")].find(
@@ -141,6 +143,9 @@ it("opens on cached subscriptions and highlights new items with a retry on the f
 
 		box.replaceChildren();
 		mountSubscriptions(box, store, open, controller.signal, results);
+		await vi.waitFor(() =>
+			expect(button("Episode").closest("details")?.open).toBe(true),
+		);
 		await vi.waitFor(() =>
 			expect(
 				box.querySelector(".agent-client-media-subscription-new")

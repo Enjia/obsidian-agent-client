@@ -7,6 +7,8 @@ import { siteIs, type SourceLink } from "./source-reader";
 interface SubscriptionCheckResults {
 	newEntries: Map<string, Set<string>>;
 	failures: Map<string, string>;
+	expandedSources: Set<string>;
+	scrollTop: number;
 }
 
 export class SubscriptionModal extends Modal {
@@ -14,6 +16,8 @@ export class SubscriptionModal extends Modal {
 	private readonly results: SubscriptionCheckResults = {
 		newEntries: new Map(),
 		failures: new Map(),
+		expandedSources: new Set(),
+		scrollTop: 0,
 	};
 
 	constructor(
@@ -72,8 +76,9 @@ export function mountSubscriptions(
 	store: Pick<MediaStore, "read" | "updateFeed" | "remove">,
 	openEntry: (link: SourceLink) => void,
 	signal: AbortSignal,
-	{ newEntries, failures }: SubscriptionCheckResults,
+	state: SubscriptionCheckResults,
 ): void {
+	const { newEntries, failures, expandedSources } = state;
 	const section = container.createDiv({
 		cls: "agent-client-media-subscriptions",
 	});
@@ -117,13 +122,16 @@ export function mountSubscriptions(
 			get: (url, headers) => fetchSourceText(url, headers, signal),
 			signal,
 		});
+	const savePosition = () => {
+		for (const [url, details] of displayed) {
+			if (details.open) expandedSources.add(url);
+			else expandedSources.delete(url);
+		}
+		state.scrollTop = container.scrollTop;
+	};
 	const render = (subscriptions: Subscription[]) => {
 		if (signal.aborted) return;
-		const expanded = new Set(
-			Array.from(displayed)
-				.filter(([, row]) => row.open)
-				.map(([url]) => url),
-		);
+		if (displayed.size) savePosition();
 		list.empty();
 		displayed.clear();
 		if (!subscriptions.length) {
@@ -137,7 +145,8 @@ export function mountSubscriptions(
 			const details = list.createEl("details");
 			displayed.set(source.url, details);
 			details.open =
-				expanded.has(source.url) || Boolean(latest?.size || failure);
+				expandedSources.has(source.url) ||
+				Boolean(latest?.size || failure);
 			const heading = details.createEl("summary");
 			const { icon, label } = sourceIcon(source);
 			const glyph = heading.createSpan({
@@ -186,7 +195,10 @@ export function mountSubscriptions(
 					cls: "agent-client-media-subscription-entry",
 					text: entry.title,
 					attr: { type: "button" },
-				}).addEventListener("click", () => openEntry(entry));
+				}).addEventListener("click", () => {
+					savePosition();
+					openEntry(entry);
+				});
 			}
 			details
 				.createEl("button", {
@@ -200,10 +212,13 @@ export function mountSubscriptions(
 							await store.remove(source.url);
 							newEntries.delete(source.url);
 							failures.delete(source.url);
+							expandedSources.delete(source.url);
+							displayed.delete(source.url);
 							return "已移除订阅。";
 						}),
 				);
 		}
+		container.scrollTop = state.scrollTop;
 	};
 
 	const check = async (sources: Subscription[]): Promise<string> => {

@@ -26,7 +26,7 @@ interface SummaryChat {
 export class MediaModal extends Modal {
 	private job?: AbortController;
 	private view?: AbortController;
-	private pendingSource?: SourceLink;
+	private pendingSource?: { link: SourceLink; back?: () => void };
 	private recorder?: MediaRecorder;
 	private stream?: MediaStream;
 	private microphoneRequest = false;
@@ -47,8 +47,8 @@ export class MediaModal extends Modal {
 		super(app);
 	}
 
-	openSource(link: SourceLink): void {
-		this.pendingSource = link;
+	openSource(link: SourceLink, back?: () => void): void {
+		this.pendingSource = { link, back };
 		this.open();
 	}
 
@@ -57,8 +57,21 @@ export class MediaModal extends Modal {
 		const view = new AbortController();
 		this.view = view;
 		this.setTitle("Read, transcribe and summarize");
-		const source = this.pendingSource;
+		const pending = this.pendingSource;
 		this.pendingSource = undefined;
+		const source = pending?.link;
+		const back = pending?.back;
+		if (back) {
+			this.contentEl
+				.createEl("button", {
+					text: "← 返回订阅",
+					attr: { type: "button" },
+				})
+				.addEventListener("click", () => {
+					this.close();
+					back();
+				});
+		}
 		let sourceInput: HTMLInputElement;
 		const readLink = () => {
 			const url = sourceInput.value.trim();
@@ -185,6 +198,7 @@ export class MediaModal extends Modal {
 		this.view?.abort();
 		this.discardRecording = true;
 		this.job?.abort();
+		this.job = undefined;
 		if (this.recorder?.state === "recording") this.recorder.stop();
 		this.stream?.getTracks().forEach((track) => track.stop());
 		this.contentEl.empty();
@@ -304,6 +318,7 @@ export class MediaModal extends Modal {
 			this.preview.value = materialMarkdown(material);
 			this.report("Ready to preview or save.");
 		} catch (error) {
+			if (this.job !== job) return;
 			this.report(
 				job.signal.aborted
 					? "Task cancelled."
@@ -312,7 +327,7 @@ export class MediaModal extends Modal {
 						: String(error),
 			);
 		} finally {
-			this.job = undefined;
+			if (this.job === job) this.job = undefined;
 		}
 	}
 

@@ -248,9 +248,18 @@ export async function readSource(
 			120_000,
 		);
 		const data = JSON.parse(stdout) as VideoMetadata;
-		const human = captionTrack(data.subtitles, data.language);
-		const caption =
-			human ?? captionTrack(data.automatic_captions, data.language);
+		const humanTracks: Record<string, CaptionTrack[]> = {};
+		const automaticTracks = { ...data.automatic_captions };
+		const isBilibili = siteIs(url, "bilibili.com") || siteIs(url, "b23.tv");
+		for (const [language, tracks] of Object.entries(data.subtitles ?? {})) {
+			if (isBilibili && language.startsWith("ai-")) {
+				automaticTracks[language.slice(3)] = tracks;
+			} else {
+				humanTracks[language] = tracks;
+			}
+		}
+		const human = captionTrack(humanTracks, data.language);
+		const caption = human ?? captionTrack(automaticTracks, data.language);
 		if (caption) {
 			const { track, language } = caption;
 			const raw =

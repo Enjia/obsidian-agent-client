@@ -118,3 +118,61 @@ it("includes full timestamped evidence in an explicit summary prompt", () => {
 	expect(prompt).toContain("https://example.org/clip");
 	expect(prompt).toContain("untrusted source material");
 });
+
+it("prefers real Bilibili subtitles over ai-prefixed machine captions", async () => {
+	const run = vi.fn(async () => ({
+		stdout: JSON.stringify({
+			title: "Video",
+			language: "zh",
+			subtitles: {
+				"ai-zh": [
+					{
+						ext: "srt",
+						data: "1\n00:00:01,000 --> 00:00:03,000\n自动字幕",
+					},
+				],
+				ja: [
+					{
+						ext: "srt",
+						data: "1\n00:00:01,000 --> 00:00:03,000\n字幕",
+					},
+				],
+			},
+		}),
+		stderr: "",
+	}));
+	const material = await readSource(
+		{ url: "https://www.bilibili.com/video/BV1234" },
+		{ signal, get: vi.fn(), run },
+	);
+	expect(material).toMatchObject({
+		method: "human-captions",
+		language: "ja",
+		segments: [{ text: "字幕" }],
+	});
+});
+
+it("labels an ai-prefixed Bilibili track as automatic", async () => {
+	const run = vi.fn(async () => ({
+		stdout: JSON.stringify({
+			title: "Video",
+			subtitles: {
+				"ai-zh": [
+					{
+						ext: "srt",
+						data: "1\n00:00:01,000 --> 00:00:03,000\n自动字幕",
+					},
+				],
+			},
+		}),
+		stderr: "",
+	}));
+	const material = await readSource(
+		{ url: "https://www.bilibili.com/video/BV1234" },
+		{ signal, get: vi.fn(), run },
+	);
+	expect(material).toMatchObject({
+		method: "automatic-captions",
+		language: "zh",
+	});
+});

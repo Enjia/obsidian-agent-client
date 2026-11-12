@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { transcribeAudio } from "../src/media/transcription";
+import { runMediaTool } from "../src/media/media-tools";
 import { materialMarkdown } from "../src/media/material";
 
 const directories: string[] = [];
@@ -64,4 +65,34 @@ it("reports a missing model before running an audio command", async () => {
 		}),
 	).rejects.toThrow(/model/i);
 	expect(run).not.toHaveBeenCalled();
+});
+
+it("cancels a downloader and the subprocess holding its output open", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "media-cancel-test-"));
+	directories.push(directory);
+	const ready = join(directory, "ready");
+	const controller = new AbortController();
+	const result = runMediaTool(
+		process.execPath,
+		[
+			"-e",
+			"require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 3000)'], {stdio: 'inherit'}); require('fs').writeFileSync(process.argv[1], 'ready'); setInterval(() => {}, 1000);",
+			ready,
+		],
+		controller.signal,
+		4_000,
+	).catch((error: unknown) => error);
+	try {
+		await vi.waitFor(
+			async () => expect(await readFile(ready, "utf8")).toBe("ready"),
+			{ timeout: 2_000 },
+		);
+		const started = Date.now();
+		controller.abort();
+		expect(await result).toMatchObject({ message: "Operation cancelled." });
+		expect(Date.now() - started).toBeLessThan(2_000);
+	} finally {
+		controller.abort();
+		await result;
+	}
 });

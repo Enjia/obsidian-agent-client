@@ -12,7 +12,8 @@ export interface Material {
 		| "published-transcript"
 		| "human-captions"
 		| "automatic-captions"
-		| "local-transcription";
+		| "local-transcription"
+		| "bailian-transcription";
 	text?: string;
 	segments?: TranscriptSegment[];
 	language?: string;
@@ -24,6 +25,7 @@ const methodLabels: Record<Material["method"], string> = {
 	"human-captions": "Human captions",
 	"automatic-captions": "Automatic captions",
 	"local-transcription": "Local transcription (Whisper)",
+	"bailian-transcription": "Cloud transcription (Bailian Paraformer v2)",
 };
 
 function timestamp(ms: number): string {

@@ -231,7 +231,12 @@ it("stops after checking video captions when none are available", async () => {
 		stderr: "",
 	}));
 	const result = await readSource({ url }, { signal, get: vi.fn(), run });
-	expect(result).toEqual({ source: url, title: "Video", audioUrl: url });
+	expect(result).toEqual({
+		source: url,
+		title: "Video",
+		audioUrl: url,
+		requiresDownload: true,
+	});
 	expect(run).toHaveBeenCalledExactlyOnceWith(
 		expect.any(String),
 		expect.arrayContaining(["--skip-download", url]),

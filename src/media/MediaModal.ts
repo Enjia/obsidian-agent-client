@@ -1,6 +1,13 @@
 import type { MediaStore } from "./media-store";
 import { fetchSourceText } from "./source-fetch";
-import { Modal, normalizePath, Notice, Setting, type App } from "obsidian";
+import {
+	Modal,
+	normalizePath,
+	Notice,
+	SecretComponent,
+	Setting,
+	type App,
+} from "obsidian";
 import { extname } from "path";
 import {
 	INLINE_SUMMARY_LIMIT,
@@ -40,6 +47,8 @@ export class MediaModal extends Modal {
 	private pendingTranscription?: SourceAudio;
 	private sourceInput!: HTMLInputElement;
 	private transcribeButton!: HTMLButtonElement;
+	private cloudButton!: HTMLButtonElement;
+	private cloudSecretId = "";
 	private preview!: HTMLTextAreaElement;
 	private status!: HTMLElement;
 	private summarizing = false;
@@ -155,6 +164,35 @@ export class MediaModal extends Modal {
 						);
 				});
 			});
+		new Setting(this.contentEl)
+			.setName("百炼 API Key")
+			.setDesc("云端转录使用北京地域的普通百炼 API Key。")
+			.addComponent((el) => {
+				const picker = new SecretComponent(this.app, el);
+				this.cloudSecretId = "";
+				let selectionChanged = false;
+				void this.store
+					.read()
+					.then(({ bailianSecretId }) => {
+						if (view.signal.aborted || selectionChanged) return;
+						this.cloudSecretId = bailianSecretId ?? "";
+						picker.setValue(this.cloudSecretId);
+					})
+					.catch(() => {
+						if (!view.signal.aborted)
+							this.report("无法读取百炼 API Key 配置。");
+					});
+				return picker.onChange(async (id) => {
+					selectionChanged = true;
+					this.cloudSecretId = id;
+					try {
+						await this.store.setBailianSecretId(id);
+					} catch {
+						if (!view.signal.aborted)
+							this.report("无法保存百炼 API Key 配置。");
+					}
+				});
+			});
 		const controls = this.contentEl.createDiv({
 			cls: "agent-client-media-controls",
 		});
@@ -201,6 +239,23 @@ export class MediaModal extends Modal {
 			const audio = this.pendingTranscription;
 			if (!audio) return;
 			this.startTranscription({ kind: "source", audio });
+		});
+		this.cloudButton = this.contentEl.createEl("button", {
+			text: "云端转录（百炼）",
+			attr: { type: "button" },
+		});
+		this.cloudButton.hidden = true;
+		this.cloudButton.addEventListener("click", () => {
+			const audio = this.pendingTranscription;
+			if (!audio || audio.requiresDownload) return;
+			const apiKey = this.cloudSecretId
+				? this.app.secretStorage.getSecret(this.cloudSecretId)?.trim()
+				: undefined;
+			if (!apiKey || apiKey.startsWith("sk-sp-")) {
+				this.report("请先选择北京地域的普通百炼 API Key。");
+				return;
+			}
+			this.startTranscription({ kind: "bailian", audio, apiKey });
 		});
 		this.preview = this.contentEl.createEl("textarea", {
 			cls: "agent-client-media-preview",
@@ -355,9 +410,7 @@ export class MediaModal extends Modal {
 			if (signal.aborted) return;
 			if ("audioUrl" in result) {
 				this.pendingTranscription = result;
-				this.report(
-					`${result.title} · 未找到可直接使用的文字。开始本地转录后将下载音频。`,
-				);
+				this.report(result.title);
 			} else {
 				this.showMaterial(result);
 				this.report("Ready to preview or save.");
@@ -383,6 +436,7 @@ export class MediaModal extends Modal {
 	private clearSourceResult(): void {
 		this.pendingTranscription = undefined;
 		this.transcribeButton.hidden = true;
+		this.cloudButton.hidden = true;
 		this.showMaterial(undefined);
 	}
 
@@ -393,7 +447,11 @@ export class MediaModal extends Modal {
 
 	private renderTask(state: TranscriptionState | undefined): void {
 		this.transcribeButton.hidden = !this.pendingTranscription;
-		this.transcribeButton.disabled = state?.phase === "running";
+		this.cloudButton.hidden =
+			!this.pendingTranscription ||
+			Boolean(this.pendingTranscription.requiresDownload);
+		this.transcribeButton.disabled = this.cloudButton.disabled =
+			state?.phase === "running";
 		this.transcribeButton.title =
 			state?.phase === "running" ? "已有转录正在进行。" : "";
 		if (!this.followingTask || !state) return;

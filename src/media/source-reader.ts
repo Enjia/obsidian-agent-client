@@ -33,6 +33,7 @@ interface ReadOptions extends MediaTaskOptions {
 
 export interface SourceAudio {
 	audioUrl: string;
+	requiresDownload?: true;
 	source: string;
 	title: string;
 }
@@ -232,7 +233,12 @@ export async function readSource(
 				segments,
 			};
 		}
-		return { audioUrl: source, source, title: data.title || title };
+		return {
+			audioUrl: source,
+			source,
+			title: data.title || title,
+			requiresDownload: true,
+		};
 	}
 
 	progress?.("Reading source page…");

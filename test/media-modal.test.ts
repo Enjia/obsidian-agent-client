@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 import { App } from "obsidian";
 import { expect, it, vi } from "vitest";
+import { transcribeWithBailian } from "../src/media/bailian-transcription";
 import { MediaModal } from "../src/media/MediaModal";
 import { MediaStore } from "../src/media/media-store";
 import { transcribeSource } from "../src/media/transcription";
 import { TranscriptionTask } from "../src/media/transcription-task";
+
+vi.mock("../src/media/bailian-transcription", () => ({
+	transcribeWithBailian: vi.fn(),
+}));
 
 vi.mock("../src/media/transcription", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/media/transcription")>()),
@@ -35,8 +40,22 @@ vi.mock("obsidian", () => {
 		return this.appendChild(element);
 	}
 	return {
-		App: class {},
+		App: class {
+			secretStorage = {
+				getSecret: (id: string) =>
+					id === "bailian-test" ? "test-key" : null,
+			};
+		},
+		SecretComponent: class {
+			setValue() {
+				return this;
+			}
+			onChange() {
+				return this;
+			}
+		},
 		Modal: class {
+			constructor(readonly app: App) {}
 			contentEl = Object.assign(document.createElement("div"), {
 				createEl: createElement,
 				createDiv(
@@ -61,6 +80,10 @@ vi.mock("obsidian", () => {
 				return this;
 			}
 			setDesc() {
+				return this;
+			}
+			addComponent(callback: (el: HTMLElement) => unknown) {
+				callback(this.parent);
 				return this;
 			}
 			addText(
@@ -175,6 +198,15 @@ it("waits for confirmation, keeps processing after closing, and reopens the late
 	modal.openSource(audio, back);
 	await vi.waitFor(() => expect(button("开始本地转录").hidden).toBe(false));
 	expect(transcribe).not.toHaveBeenCalled();
+	expect(button("云端转录（百炼）").hidden).toBe(false);
+	expect(modal.contentEl.querySelector('[role="status"]')?.textContent).toBe(
+		"Episode One",
+	);
+	button("云端转录（百炼）").click();
+	expect(
+		modal.contentEl.querySelector('[role="status"]')?.textContent,
+	).toContain("普通百炼 API Key");
+	expect(task.current).toBeUndefined();
 	button("← 返回订阅").click();
 	expect(back).toHaveBeenCalledOnce();
 	expect(transcribe).not.toHaveBeenCalled();
@@ -257,4 +289,63 @@ it("waits for confirmation, keeps processing after closing, and reopens the late
 		).toContain("Episode Two · 已取消转录。"),
 	);
 	modal.close();
+});
+
+it("starts the cloud task with the selected Obsidian secret only after clicking the button", async () => {
+	const cloud = vi
+		.mocked(transcribeWithBailian)
+		.mockReset()
+		.mockResolvedValue({
+			title: "Public episode",
+			method: "bailian-transcription",
+			text: "云端逐字稿",
+		});
+	const store = new MediaStore(
+		{
+			exists: async () => true,
+			read: async () =>
+				JSON.stringify({
+					version: 1,
+					subscriptions: [],
+					bailianSecretId: "bailian-test",
+				}),
+			write: async () => {},
+		},
+		"media.json",
+	);
+	const modal = new MediaModal(
+		new App(),
+		{ agents: () => [], defaultAgentId: () => "", start: vi.fn() },
+		store,
+		new TranscriptionTask(),
+		{ ffmpeg: "ffmpeg", whisper: "whisper", model: "model.bin" },
+	);
+	try {
+		modal.openSource({
+			url: "https://example.com/episode",
+			title: "Public episode",
+			audioUrl: "https://example.com/audio.mp3",
+		});
+		const button = Array.from(
+			modal.contentEl.querySelectorAll("button"),
+		).find((node) => node.textContent === "云端转录（百炼）");
+		await vi.waitFor(() => expect(button?.hidden).toBe(false));
+		expect(cloud).not.toHaveBeenCalled();
+		button?.click();
+		await vi.waitFor(() =>
+			expect(modal.contentEl.querySelector("textarea")?.value).toContain(
+				"云端逐字稿",
+			),
+		);
+		expect(cloud).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({
+				audioUrl: "https://example.com/audio.mp3",
+			}),
+			"test-key",
+			expect.any(AbortSignal),
+			expect.any(Function),
+		);
+	} finally {
+		modal.close();
+	}
 });

@@ -19,6 +19,7 @@ export interface Subscription {
 interface MediaData {
 	version: 1;
 	model?: string;
+	bailianSecretId?: string;
 	subscriptions: Subscription[];
 }
 
@@ -115,6 +116,16 @@ export class MediaStore {
 		await this.change(async () => {
 			const data = await this.readFile();
 			await this.write({ ...data, model: model || undefined });
+		});
+	}
+
+	async setBailianSecretId(secretId: string): Promise<void> {
+		await this.change(async () => {
+			const data = await this.readFile();
+			await this.write({
+				...data,
+				bailianSecretId: secretId || undefined,
+			});
 		});
 	}
 

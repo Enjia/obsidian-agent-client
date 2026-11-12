@@ -1,13 +1,32 @@
-import { Modal, normalizePath, Notice, Setting, type App } from "obsidian";
+import {
+	Modal,
+	normalizePath,
+	Notice,
+	requestUrl,
+	Setting,
+	type App,
+} from "obsidian";
 import { writeFile } from "fs/promises";
 import { extname, join } from "path";
-import { materialMarkdown, type Material } from "./material";
+import {
+	INLINE_SUMMARY_LIMIT,
+	materialMarkdown,
+	summaryPrompt,
+	type Material,
+} from "./material";
+import { readSource, type SourceLink } from "./source-reader";
 import { withMediaDirectory } from "./media-tools";
 import {
 	defaultTranscriptionTools,
 	transcribeAudio,
 	type TranscriptionTools,
 } from "./transcription";
+
+interface SummaryChat {
+	agents(): Array<{ id: string; displayName: string }>;
+	defaultAgentId(): string;
+	start(agentId: string, prompt: string): Promise<void>;
+}
 
 export class MediaModal extends Modal {
 	private job?: AbortController;
@@ -19,9 +38,12 @@ export class MediaModal extends Modal {
 	private material?: Material;
 	private preview!: HTMLTextAreaElement;
 	private status!: HTMLElement;
+	private summarizing = false;
+	private agentId?: string;
 
 	constructor(
 		app: App,
+		private chat: SummaryChat,
 		private tools: TranscriptionTools = defaultTranscriptionTools(),
 	) {
 		super(app);
@@ -30,6 +52,22 @@ export class MediaModal extends Modal {
 	onOpen(): void {
 		this.closed = false;
 		this.setTitle("Read, transcribe and summarize");
+		let sourceInput: HTMLInputElement;
+		const readLink = () => void this.readLink({ url: sourceInput.value });
+		new Setting(this.contentEl)
+			.setName("Article, podcast or video link")
+			.addText((text) => {
+				sourceInput = text.setPlaceholder("https://…").inputEl;
+				sourceInput.addEventListener("keydown", (event) => {
+					if (event.key === "Enter") {
+						event.preventDefault();
+						readLink();
+					}
+				});
+			})
+			.addButton((button) =>
+				button.setButtonText("Read source").onClick(readLink),
+			);
 		new Setting(this.contentEl)
 			.setName("Whisper model")
 			.setDesc("Path to a multilingual whisper.cpp model file.")
@@ -72,13 +110,35 @@ export class MediaModal extends Modal {
 			cls: "agent-client-media-preview",
 			attr: { readonly: "", "aria-label": "Source material preview" },
 		});
-		this.contentEl
-			.createEl("button", { text: "Save as note" })
-			.addEventListener("click", () => void this.save());
+		if (this.material) this.preview.value = materialMarkdown(this.material);
+		const agents = this.chat.agents();
+		if (!agents.some((agent) => agent.id === this.agentId))
+			this.agentId = this.chat.defaultAgentId();
+		new Setting(this.contentEl)
+			.setName("Result")
+			.addButton((button) =>
+				button
+					.setButtonText("Save as note")
+					.onClick(() => void this.save()),
+			)
+			.addDropdown((dropdown) => {
+				for (const agent of agents)
+					dropdown.addOption(agent.id, agent.displayName);
+				dropdown.setValue(this.agentId ?? "").onChange((agentId) => {
+					this.agentId = agentId;
+				});
+			})
+			.addButton((button) =>
+				button
+					.setButtonText("Summarize with agent")
+					.setCta()
+					.onClick(() => void this.summarize()),
+			);
 	}
 
 	onClose(): void {
 		this.closed = true;
+		this.discardRecording = true;
 		this.job?.abort();
 		if (this.recorder?.state === "recording") this.recorder.stop();
 		this.stream?.getTracks().forEach((track) => track.stop());
@@ -153,10 +213,6 @@ export class MediaModal extends Modal {
 		title: string,
 		extension: string,
 	): Promise<void> {
-		if (this.job || this.recorder || this.microphoneRequest) {
-			this.report("Finish the current recording or task first.");
-			return;
-		}
 		await this.run((signal) =>
 			withMediaDirectory(async (directory) => {
 				const path = join(directory, "input" + extension);
@@ -176,9 +232,35 @@ export class MediaModal extends Modal {
 		);
 	}
 
+	private async readLink(link: SourceLink): Promise<void> {
+		await this.run((signal) =>
+			readSource(link, {
+				get: async (url, headers) => {
+					const response = await requestUrl({
+						url,
+						headers,
+						throw: false,
+					});
+					if (response.status >= 400)
+						throw new Error(
+							`Source request failed (HTTP ${response.status}).`,
+						);
+					return response.text;
+				},
+				tools: this.tools,
+				signal,
+				progress: (status) => this.report(status),
+			}),
+		);
+	}
+
 	private async run(
 		operation: (signal: AbortSignal) => Promise<Material>,
 	): Promise<void> {
+		if (this.job || this.recorder || this.microphoneRequest) {
+			this.report("Finish the current recording or task first.");
+			return;
+		}
 		const job = new AbortController();
 		this.job = job;
 		try {
@@ -201,9 +283,21 @@ export class MediaModal extends Modal {
 	}
 
 	private async save(): Promise<void> {
-		if (!this.material) return;
+		if (!this.material) {
+			this.report("Read a source or transcribe audio first.");
+			return;
+		}
+		try {
+			const path = await this.saveMaterial(this.material);
+			new Notice(`Saved ${path}`);
+		} catch (error) {
+			this.report(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private async saveMaterial(material: Material): Promise<string> {
 		const name =
-			this.material.title
+			material.title
 				.replace(/[\\/:*?"<>|#[\]\r\n]/g, "-")
 				.trim()
 				.slice(0, 100) || "Source material";
@@ -211,11 +305,31 @@ export class MediaModal extends Modal {
 		let path = base + ".md";
 		for (let index = 2; this.app.vault.getAbstractFileByPath(path); index++)
 			path = `${base} (${index}).md`;
+		await this.app.vault.create(path, materialMarkdown(material));
+		return path;
+	}
+
+	private async summarize(): Promise<void> {
+		if (this.summarizing) return;
+		const material = this.material;
+		const agentId = this.agentId;
+		if (!material || !agentId) {
+			this.report("Read a source and select an agent first.");
+			return;
+		}
+		this.summarizing = true;
 		try {
-			await this.app.vault.create(path, materialMarkdown(this.material));
-			new Notice(`Saved ${path}`);
+			const notePath =
+				materialMarkdown(material).length > INLINE_SUMMARY_LIMIT
+					? await this.saveMaterial(material)
+					: undefined;
+			if (notePath) new Notice(`Saved source material to ${notePath}`);
+			await this.chat.start(agentId, summaryPrompt(material, notePath));
+			this.close();
 		} catch (error) {
 			this.report(error instanceof Error ? error.message : String(error));
+		} finally {
+			this.summarizing = false;
 		}
 	}
 

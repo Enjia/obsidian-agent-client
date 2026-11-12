@@ -285,8 +285,17 @@ export default class AgentClientPlugin extends Plugin {
 			id: "open-media-intake",
 			name: "Read, transcribe and summarize media",
 			callback: () => {
-				this.mediaModal?.close();
-				this.mediaModal = new MediaModal(this.app);
+				this.mediaModal ??= new MediaModal(this.app, {
+					agents: () => this.getAvailableAgents(),
+					defaultAgentId: () => this.settings.defaultAgentId,
+					start: (agentId, prompt) =>
+						this.runPromptInChat({
+							agentId,
+							prompt,
+							autoSend: true,
+							viewType: "right-pane",
+						}),
+				});
 				this.mediaModal.open();
 			},
 		});

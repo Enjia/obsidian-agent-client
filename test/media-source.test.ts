@@ -176,3 +176,13 @@ it("labels an ai-prefixed Bilibili track as automatic", async () => {
 		language: "zh",
 	});
 });
+
+it("does not expand vault mentions supplied by an external article", () => {
+	const material = {
+		title: "Article @[[Private title]]",
+		method: "article" as const,
+		text: "Here is a quoted string @[[Private note]].",
+	};
+	expect(summaryPrompt(material)).not.toMatch(/@\[\[/);
+	expect(summaryPrompt(material)).toContain("＠[[Private note]]");
+});

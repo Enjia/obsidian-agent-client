@@ -256,12 +256,12 @@ export default class AgentClientPlugin extends Plugin {
 	 */
 	private _pendingPromptHandlers = new Map<
 		string,
-		(prompt: string, autoSend: boolean) => void
+		(prompt: string, autoSend: boolean, omitActiveNote?: boolean) => void
 	>();
 	/** Prompts queued before their target ChatPanel registered a handler. */
 	private _pendingPrompts = new Map<
 		string,
-		Array<{ prompt: string; autoSend: boolean }>
+		Array<{ prompt: string; autoSend: boolean; omitActiveNote?: boolean }>
 	>();
 	/**
 	 * Pending graceful AcpClient teardown timers, keyed by viewId. An embedded
@@ -293,6 +293,7 @@ export default class AgentClientPlugin extends Plugin {
 							agentId,
 							prompt,
 							autoSend: true,
+							omitActiveNote: true,
 							viewType: "right-pane",
 						}),
 				});
@@ -1127,6 +1128,7 @@ export default class AgentClientPlugin extends Plugin {
 		agentId: string;
 		prompt: string;
 		autoSend: boolean;
+		omitActiveNote?: boolean;
 		viewType: "right-pane" | "floating" | "editor-tab" | "embedded";
 		sourcePath?: string;
 		lineStart?: number;
@@ -1179,7 +1181,12 @@ export default class AgentClientPlugin extends Plugin {
 		// registered its handler, otherwise queue until it mounts. Replaces a
 		// 100ms setTimeout + workspace broadcast that could drop the prompt if
 		// the React root mounted late.
-		this.deliverPrompt(targetViewId, prompt, autoSend);
+		this.deliverPrompt(
+			targetViewId,
+			prompt,
+			autoSend,
+			options.omitActiveNote,
+		);
 	}
 
 	/**
@@ -1189,14 +1196,18 @@ export default class AgentClientPlugin extends Plugin {
 	 */
 	registerPendingPromptHandler(
 		viewId: string,
-		handler: (prompt: string, autoSend: boolean) => void,
+		handler: (
+			prompt: string,
+			autoSend: boolean,
+			omitActiveNote?: boolean,
+		) => void,
 	): () => void {
 		this._pendingPromptHandlers.set(viewId, handler);
 		const queued = this._pendingPrompts.get(viewId);
 		if (queued) {
 			this._pendingPrompts.delete(viewId);
 			for (const item of queued) {
-				handler(item.prompt, item.autoSend);
+				handler(item.prompt, item.autoSend, item.omitActiveNote);
 			}
 		}
 		return () => {
@@ -1210,17 +1221,20 @@ export default class AgentClientPlugin extends Plugin {
 		viewId: string,
 		prompt: string,
 		autoSend: boolean,
+		omitActiveNote?: boolean,
 	): void {
 		const handler = this._pendingPromptHandlers.get(viewId);
 		if (handler) {
-			handler(prompt, autoSend);
+			handler(prompt, autoSend, omitActiveNote);
 		} else {
 			// Panel not mounted yet; drained by registerPendingPromptHandler.
 			const queue = this._pendingPrompts.get(viewId);
 			if (queue) {
-				queue.push({ prompt, autoSend });
+				queue.push({ prompt, autoSend, omitActiveNote });
 			} else {
-				this._pendingPrompts.set(viewId, [{ prompt, autoSend }]);
+				this._pendingPrompts.set(viewId, [
+					{ prompt, autoSend, omitActiveNote },
+				]);
 			}
 		}
 	}

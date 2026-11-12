@@ -382,7 +382,10 @@ export const ChatPanel = React.memo(function ChatPanel({
 	);
 
 	// Pending auto-send queued by the pending-prompt handler (drained when ready)
-	const [pendingAutoSend, setPendingAutoSend] = useState<string | null>(null);
+	const [pendingAutoSend, setPendingAutoSend] = useState<{
+		prompt: string;
+		omitActiveNote?: boolean;
+	} | null>(null);
 	const persistRestoreAttemptedRef = useRef(false);
 	// Tracks whether we've already re-spawned the agent to match a saved
 	// conversation before restoring it (prevents a restart loop).
@@ -1293,13 +1296,13 @@ export const ChatPanel = React.memo(function ChatPanel({
 	useEffect(() => {
 		return plugin.registerPendingPromptHandler(
 			viewId,
-			(prompt, autoSend) => {
+			(prompt, autoSend, omitActiveNote) => {
 				if (typeof prompt !== "string" || prompt.length === 0) return;
 				setInputValue(prompt);
 				// Injected prompts are a fresh message — don't carry over any
 				// attachments already staged in this panel (#341/#6).
 				setAttachedFiles([]);
-				if (autoSend) setPendingAutoSend(prompt);
+				if (autoSend) setPendingAutoSend({ prompt, omitActiveNote });
 			},
 		);
 	}, [plugin, viewId]);
@@ -1313,10 +1316,10 @@ export const ChatPanel = React.memo(function ChatPanel({
 		if (isSending) return;
 		if (sessionHistory.loading) return;
 
-		const prompt = pendingAutoSend;
+		const { prompt, omitActiveNote } = pendingAutoSend;
 		setPendingAutoSend(null);
 		setInputValue("");
-		void handleSendMessage(prompt);
+		void handleSendMessage(prompt, undefined, omitActiveNote);
 	}, [
 		pendingAutoSend,
 		isSessionReady,

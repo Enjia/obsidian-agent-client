@@ -35,6 +35,7 @@ export interface UseChatActionsReturn {
 	handleSendMessage: (
 		content: string,
 		attachments?: AttachedFile[],
+		omitActiveNote?: boolean,
 	) => Promise<void>;
 	handleStopGeneration: () => Promise<void>;
 	handleNewChat: (requestedAgentId?: string) => Promise<void>;
@@ -141,7 +142,11 @@ export function useChatActions(
 	const shouldConvertToWsl = Platform.isWin && settings.windowsWslMode;
 
 	const handleSendMessage = useCallback(
-		async (content: string, attachments?: AttachedFile[]) => {
+		async (
+			content: string,
+			attachments?: AttachedFile[],
+			omitActiveNote = false,
+		) => {
 			// Dismiss overlays on send
 			agent.clearError();
 			setAgentUpdateNotification(null);
@@ -183,6 +188,7 @@ export function useChatActions(
 				activeNote: suggestions.mentions.activeNote,
 				vaultBasePath: vaultPath,
 				isAutoMentionDisabled:
+					omitActiveNote ||
 					suggestions.mentions.isAutoMentionDisabled,
 				images: images.length > 0 ? images : undefined,
 				resourceLinks:

@@ -65,6 +65,6 @@ Read the complete source material in the vault file at ${JSON.stringify(notePath
 		: `${instructions}
 
 BEGIN SOURCE MATERIAL
-${materialMarkdown(material)}
+${materialMarkdown(material).replace(/@\[\[/g, "＠[[")}
 END SOURCE MATERIAL`;
 }

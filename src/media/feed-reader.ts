@@ -228,6 +228,33 @@ async function requireXml(
 	return feed;
 }
 
+async function applePodcastFeed(
+	url: URL,
+	options: ReadFeedOptions,
+): Promise<SourceFeed> {
+	const match = url.pathname.match(
+		/^\/(?:([a-z]{2})\/)?podcast\/(?:[^/]+\/)?id(\d+)\/?$/i,
+	);
+	if (!match) throw new Error("请输入 Apple Podcasts 的节目或单集链接。");
+	const [, country, showId] = match;
+	const lookup = new URL("https://itunes.apple.com/lookup");
+	lookup.searchParams.set("id", showId);
+	lookup.searchParams.set("entity", "podcast");
+	if (country) lookup.searchParams.set("country", country.toLowerCase());
+
+	const raw = await options.get(lookup.href, { Accept: "application/json" });
+	options.signal.throwIfAborted();
+	const data = JSON.parse(raw) as { results?: Array<{ feedUrl?: string }> };
+	const address = data.results?.find(
+		(result) => typeof result.feedUrl === "string" && result.feedUrl.trim(),
+	)?.feedUrl;
+	if (!address)
+		throw new Error(
+			"Apple Podcasts 没有找到公开 RSS。若你有节目提供的 RSS 链接，可以直接添加。",
+		);
+	return requireXml(webUrl(address).href, options);
+}
+
 export async function readFeed(
 	input: string,
 	options: ReadFeedOptions,
@@ -235,6 +262,8 @@ export async function readFeed(
 	const { get, signal } = options;
 	signal.throwIfAborted();
 	const url = webUrl(input);
+	if (url.hostname === "podcasts.apple.com")
+		return applePodcastFeed(url, options);
 	if (url.hostname === "space.bilibili.com") {
 		const mid = url.pathname.match(/^\/(\d+)(?:\/|$)/)?.[1];
 		if (!mid) throw new Error("Enter a Bilibili creator space URL.");
@@ -275,6 +304,6 @@ export async function readFeed(
 		}
 	}
 	throw new Error(
-		"No RSS or Atom feed found. Try the feed URL, a YouTube channel, a Bilibili space, or a Xiaoyuzhou show URL.",
+		"No RSS or Atom feed found. Try the feed URL, a YouTube channel, a Bilibili space, or an Apple Podcasts or Xiaoyuzhou show URL.",
 	);
 }

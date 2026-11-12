@@ -59,6 +59,7 @@ function sourceIcon(source: Subscription): { icon: string; label: string } {
 	}
 	if (
 		siteIs(url, "xiaoyuzhoufm.com") ||
+		url.hostname === "podcasts.apple.com" ||
 		source.entries.some((entry) => entry.audioUrl || entry.transcriptUrl)
 	) {
 		return { icon: "headphones", label: "播客" };

@@ -212,3 +212,39 @@ it("keeps blog thumbnail enclosures out of the media path", async () => {
 	expect(feed.entries[0].audioUrl).toBeUndefined();
 	expect(feed.entries[0].url).toBe("https://example.org/episode");
 });
+
+it("resolves an Apple Podcasts episode link to its show's public RSS", async () => {
+	const get = vi.fn(async (address: string) =>
+		address.startsWith("https://itunes.apple.com/lookup")
+			? JSON.stringify({ results: [{ feedUrl: url }] })
+			: rss,
+	);
+	const signal = new AbortController().signal;
+	const feed = await readFeed(
+		"https://podcasts.apple.com/gb/podcast/example-show/id12345?i=99999",
+		{ get, signal },
+	);
+	const lookup = new URL(get.mock.calls[0][0]);
+	expect(lookup.origin + lookup.pathname).toBe(
+		"https://itunes.apple.com/lookup",
+	);
+	expect(lookup.searchParams.get("id")).toBe("12345");
+	expect(lookup.searchParams.get("country")).toBe("gb");
+	expect(get.mock.calls[1][0]).toBe(url);
+	expect(feed.entries[0]).toMatchObject({
+		title: "Episode 1",
+		audioUrl: "https://example.org/episode.mp3",
+		transcriptUrl: "https://example.org/transcript.vtt",
+	});
+});
+
+it("explains when Apple Podcasts has no public feed", async () => {
+	const get = vi.fn(async () => '{"results":[]}');
+	await expect(
+		readFeed("https://podcasts.apple.com/us/podcast/example/id12345", {
+			get,
+			signal: new AbortController().signal,
+		}),
+	).rejects.toThrow("没有找到公开 RSS");
+	expect(get).toHaveBeenCalledOnce();
+});

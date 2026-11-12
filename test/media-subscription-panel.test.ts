@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
-import { mountSubscriptions } from "../src/media/SubscriptionPanel";
+import { App } from "obsidian";
+import {
+	mountSubscriptions,
+	SubscriptionModal,
+} from "../src/media/SubscriptionPanel";
 import { readFeedHistory } from "../src/media/feed-history";
 import { readFeed } from "../src/media/feed-reader";
 import { MediaStore } from "../src/media/media-store";
@@ -8,7 +12,18 @@ import { MediaStore } from "../src/media/media-store";
 vi.mock("../src/media/feed-history", () => ({ readFeedHistory: vi.fn() }));
 vi.mock("../src/media/feed-reader", () => ({ readFeed: vi.fn() }));
 vi.mock("obsidian", () => ({
-	Modal: class {},
+	App: class {},
+	Modal: class {
+		modalEl = document.createElement("div");
+		contentEl = this.modalEl.appendChild(document.createElement("div"));
+		setTitle() {}
+		open() {
+			(this as unknown as SubscriptionModal).onOpen();
+		}
+		close() {
+			(this as unknown as SubscriptionModal).onClose();
+		}
+	},
 	setIcon: (element: HTMLElement, icon: string) => {
 		element.dataset.icon = icon;
 	},
@@ -132,7 +147,11 @@ it("opens on cached subscriptions and highlights new items with a retry on the f
 		);
 		const badge = box.querySelector(".agent-client-media-subscription-new");
 		expect(badge?.parentElement?.textContent).toContain("Newly published");
-		expect(badge?.closest("details")?.open).toBe(true);
+		expect(badge?.closest("details")?.open).toBe(false);
+		expect(button("重试此来源").closest("details")?.open).toBe(false);
+		const podcastRow = button("重试此来源").closest("details");
+		if (!podcastRow) throw new Error("Podcast row missing");
+		podcastRow.open = true;
 		expect(button("重试此来源").closest("details")?.textContent).toContain(
 			"Podcast",
 		);
@@ -259,6 +278,59 @@ it("shows old episodes in pages and restores the page when returning from an epi
 		expect(history).toHaveBeenCalledOnce();
 	} finally {
 		controller.abort();
+		reset();
+	}
+});
+
+it("starts with collapsed sources from the toolbar and restores the position only on Back", async () => {
+	const reset = installElementHelpers();
+	const url = "https://example.org/feed";
+	const episode = {
+		id: "episode",
+		title: "Episode",
+		url: "https://example.org/episode",
+	};
+	const store = new MediaStore(
+		{
+			exists: async () => true,
+			read: async () =>
+				JSON.stringify({
+					version: 1,
+					subscriptions: [
+						{ url, title: "Podcast", entries: [episode] },
+					],
+				}),
+			write: async () => {},
+		},
+		"media.json",
+	);
+	const openEntry = vi.fn();
+	const modal = new SubscriptionModal(new App(), store, openEntry);
+	const details = () => modal.contentEl.querySelector("details");
+	const open = async (restorePosition?: boolean) => {
+		modal.show(restorePosition);
+		await vi.waitFor(() => expect(details()).toBeTruthy());
+	};
+	try {
+		await open();
+		expect(details()?.open).toBe(false);
+		const podcast = details();
+		if (!podcast) throw new Error("Podcast row missing");
+		podcast.open = true;
+		modal.modalEl.scrollTop = 120;
+		podcast.querySelector<HTMLButtonElement>("li button")?.click();
+		expect(openEntry).toHaveBeenCalledWith(episode);
+
+		await open(true);
+		expect(details()?.open).toBe(true);
+		expect(modal.modalEl.scrollTop).toBe(120);
+		modal.close();
+
+		await open();
+		expect(details()?.open).toBe(false);
+		expect(modal.modalEl.scrollTop).toBe(0);
+	} finally {
+		modal.close();
 		reset();
 	}
 });

@@ -546,14 +546,16 @@ export default class AgentClientPlugin extends Plugin {
 		else this.mediaModal.open();
 	}
 
-	openSubscriptions(): void {
+	openSubscriptions(restorePosition = false): void {
 		this.subscriptionModal ??= new SubscriptionModal(
 			this.app,
 			this.mediaStore,
 			(source) =>
-				this.openMediaIntake(source, () => this.openSubscriptions()),
+				this.openMediaIntake(source, () =>
+					this.openSubscriptions(true),
+				),
 		);
-		this.subscriptionModal.open();
+		this.subscriptionModal.show(restorePosition);
 	}
 
 	onunload() {

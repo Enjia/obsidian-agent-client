@@ -18,6 +18,7 @@ interface SubscriptionCheckResults {
 
 export class SubscriptionModal extends Modal {
 	private view?: AbortController;
+	private restorePosition = false;
 	private readonly results: SubscriptionCheckResults = {
 		newEntries: new Map(),
 		failures: new Map(),
@@ -35,7 +36,19 @@ export class SubscriptionModal extends Modal {
 		super(app);
 	}
 
+	show(restorePosition = false): void {
+		this.restorePosition = restorePosition;
+		this.open();
+	}
+
 	onOpen(): void {
+		if (!this.restorePosition) {
+			this.results.expandedSources.clear();
+			this.results.visibleCounts.clear();
+			this.results.historyNotices.clear();
+			this.results.scrollTop = 0;
+		}
+		this.restorePosition = false;
 		this.setTitle("订阅");
 		this.view = new AbortController();
 		mountSubscriptions(
@@ -130,7 +143,6 @@ export function mountSubscriptions(
 	const status = section.createDiv({ attr: { role: "status" } });
 	const list = section.createDiv();
 	const displayed = new Map<string, HTMLDetailsElement>();
-	const revealAfterCheck = new Set<string>();
 	let busy = false;
 
 	const options = {
@@ -160,10 +172,7 @@ export function mountSubscriptions(
 			const failure = failures.get(source.url);
 			const details = list.createEl("details");
 			displayed.set(source.url, details);
-			details.open =
-				revealAfterCheck.has(source.url) ||
-				(expandedSources.get(source.url) ??
-					Boolean(latest?.size || failure));
+			details.open = expandedSources.get(source.url) ?? false;
 			const heading = details.createEl("summary");
 			const { icon, label } = sourceIcon(source);
 			const glyph = heading.createSpan({
@@ -274,7 +283,6 @@ export function mountSubscriptions(
 						}),
 				);
 		}
-		revealAfterCheck.clear();
 		scrollRegion.scrollTop = state.scrollTop;
 	};
 
@@ -334,11 +342,9 @@ export function mountSubscriptions(
 					new Set(updated.map((entry) => entry.id)),
 				);
 				failures.delete(source.url);
-				if (updated.length) revealAfterCheck.add(source.url);
 				count += updated.length;
 			} catch (error) {
 				signal.throwIfAborted();
-				revealAfterCheck.add(source.url);
 				failures.set(
 					source.url,
 					error instanceof Error ? error.message : String(error),

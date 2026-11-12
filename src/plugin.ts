@@ -1,4 +1,5 @@
 import { MediaModal } from "./media/MediaModal";
+import { MediaStore } from "./media/media-store";
 import {
 	Plugin,
 	WorkspaceLeaf,
@@ -272,12 +273,20 @@ export default class AgentClientPlugin extends Plugin {
 	/** Floating button container (independent from chat view instances) */
 	private floatingButton: FloatingButtonContainer | null = null;
 	private mediaModal?: MediaModal;
+	private mediaStore!: MediaStore;
 	/** Counter for generating unique floating chat instance IDs */
 	private floatingChatCounter = 0;
 	/** Guards against concurrent embed-id injection for the same block. */
 	private embedIdInjectionInFlight = new Set<string>();
 
 	async onload() {
+		const mediaDirectory =
+			this.manifest.dir ??
+			`${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+		this.mediaStore = new MediaStore(
+			this.app.vault.adapter,
+			mediaDirectory + "/media.json",
+		);
 		await this.loadSettings();
 
 		initializeLogger(this.settings);
@@ -285,18 +294,22 @@ export default class AgentClientPlugin extends Plugin {
 			id: "open-media-intake",
 			name: "Read, transcribe and summarize media",
 			callback: () => {
-				this.mediaModal ??= new MediaModal(this.app, {
-					agents: () => this.getAvailableAgents(),
-					defaultAgentId: () => this.settings.defaultAgentId,
-					start: (agentId, prompt) =>
-						this.runPromptInChat({
-							agentId,
-							prompt,
-							autoSend: true,
-							omitActiveNote: true,
-							viewType: "right-pane",
-						}),
-				});
+				this.mediaModal ??= new MediaModal(
+					this.app,
+					{
+						agents: () => this.getAvailableAgents(),
+						defaultAgentId: () => this.settings.defaultAgentId,
+						start: (agentId, prompt) =>
+							this.runPromptInChat({
+								agentId,
+								prompt,
+								autoSend: true,
+								omitActiveNote: true,
+								viewType: "right-pane",
+							}),
+					},
+					this.mediaStore,
+				);
 				this.mediaModal.open();
 			},
 		});
@@ -1443,6 +1456,13 @@ export default class AgentClientPlugin extends Plugin {
 
 	async loadSettings() {
 		const raw = ((await this.loadData()) ?? {}) as Record<string, unknown>;
+		try {
+			await this.mediaStore.importLegacy(raw);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : String(error);
+			new Notice(`Could not import media subscriptions: ${message}`);
+		}
 		const D = DEFAULT_SETTINGS;
 		let migratedSecrets = false;
 

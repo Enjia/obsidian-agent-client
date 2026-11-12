@@ -1,3 +1,6 @@
+import { mountSubscriptions } from "./SubscriptionPanel";
+import type { MediaStore } from "./media-store";
+import { fetchSourceText } from "./source-fetch";
 import {
 	Modal,
 	normalizePath,
@@ -30,6 +33,7 @@ interface SummaryChat {
 
 export class MediaModal extends Modal {
 	private job?: AbortController;
+	private view?: AbortController;
 	private recorder?: MediaRecorder;
 	private stream?: MediaStream;
 	private microphoneRequest = false;
@@ -44,6 +48,7 @@ export class MediaModal extends Modal {
 	constructor(
 		app: App,
 		private chat: SummaryChat,
+		private store: MediaStore,
 		private tools: TranscriptionTools = defaultTranscriptionTools(),
 	) {
 		super(app);
@@ -51,13 +56,15 @@ export class MediaModal extends Modal {
 
 	onOpen(): void {
 		this.closed = false;
+		const view = new AbortController();
+		this.view = view;
 		this.setTitle("Read, transcribe and summarize");
 		let sourceInput: HTMLInputElement;
 		const readLink = () => void this.readLink({ url: sourceInput.value });
 		new Setting(this.contentEl)
 			.setName("Article, podcast or video link")
 			.addText((text) => {
-				sourceInput = text.setPlaceholder("https://…").inputEl;
+				sourceInput = text.setPlaceholder("Source URL").inputEl;
 				sourceInput.addEventListener("keydown", (event) => {
 					if (event.key === "Enter") {
 						event.preventDefault();
@@ -71,11 +78,42 @@ export class MediaModal extends Modal {
 		new Setting(this.contentEl)
 			.setName("Whisper model")
 			.setDesc("Path to a multilingual whisper.cpp model file.")
-			.addText((text) =>
-				text.setValue(this.tools.model).onChange((value) => {
-					this.tools.model = value.trim();
-				}),
-			);
+			.addText((text) => {
+				const input = text.setValue(this.tools.model).inputEl;
+				void this.store
+					.read()
+					.then(({ model }) => {
+						if (
+							!model ||
+							view.signal.aborted ||
+							input.value !== this.tools.model
+						)
+							return;
+						this.tools.model = model;
+						input.value = model;
+					})
+					.catch((error: unknown) =>
+						this.report(
+							error instanceof Error
+								? error.message
+								: String(error),
+						),
+					);
+				input.addEventListener("change", () => {
+					this.tools.model =
+						input.value.trim() || defaultTranscriptionTools().model;
+					input.value = this.tools.model;
+					void this.store
+						.setModel(this.tools.model)
+						.catch((error: unknown) =>
+							this.report(
+								error instanceof Error
+									? error.message
+									: String(error),
+							),
+						);
+				});
+			});
 		const controls = this.contentEl.createDiv({
 			cls: "agent-client-media-controls",
 		});
@@ -134,10 +172,17 @@ export class MediaModal extends Modal {
 					.setCta()
 					.onClick(() => void this.summarize()),
 			);
+		mountSubscriptions(
+			this.contentEl,
+			this.store,
+			(link) => void this.readLink(link),
+			view.signal,
+		);
 	}
 
 	onClose(): void {
 		this.closed = true;
+		this.view?.abort();
 		this.discardRecording = true;
 		this.job?.abort();
 		if (this.recorder?.state === "recording") this.recorder.stop();
@@ -235,18 +280,7 @@ export class MediaModal extends Modal {
 	private async readLink(link: SourceLink): Promise<void> {
 		await this.run((signal) =>
 			readSource(link, {
-				get: async (url, headers) => {
-					const response = await requestUrl({
-						url,
-						headers,
-						throw: false,
-					});
-					if (response.status >= 400)
-						throw new Error(
-							`Source request failed (HTTP ${response.status}).`,
-						);
-					return response.text;
-				},
+				get: (url, headers) => fetchSourceText(url, headers, signal),
 				tools: this.tools,
 				signal,
 				progress: (status) => this.report(status),

@@ -2796,3 +2796,11 @@ If your plugin does not need CSS, delete this file.
 	resize: vertical;
 	margin-block: 0.75rem;
 }
+
+.agent-client-media-subscriptions {
+	margin-top: 0.75rem;
+}
+
+.agent-client-media-subscriptions summary {
+	cursor: pointer;
+}

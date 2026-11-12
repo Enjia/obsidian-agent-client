@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import { readFeed } from "../src/media/feed-reader";
+import { readFeedHistory } from "../src/media/feed-history";
 import { MediaStore } from "../src/media/media-store";
 
 const rss = `<rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0">
@@ -248,4 +249,212 @@ it("explains when Apple Podcasts has no public feed", async () => {
 		}),
 	).rejects.toThrow("没有找到公开 RSS");
 	expect(get).toHaveBeenCalledOnce();
+});
+
+it("follows an explicit relative Atom next page", async () => {
+	const get = vi.fn(async (address: string) =>
+		address.endsWith("?page=2")
+			? rss
+			: '<feed xmlns="http://www.w3.org/2005/Atom"><title>Blog</title><link rel="next" href="?page=2"/></feed>',
+	);
+	const options = { get, signal: new AbortController().signal };
+	const first = await readFeed(url, options);
+	expect(first.history).toEqual({ kind: "feed", url: url + "?page=2" });
+	if (!first.history) throw new Error("Missing next page");
+	const older = await readFeedHistory(first.history, first.entries, options);
+	expect(older.entries[0].title).toBe("Episode 1");
+});
+
+it("matches a Xiaoyuzhou show to its public RSS using a known episode", async () => {
+	const show = "https://www.xiaoyuzhoufm.com/podcast/abc";
+	const recent = {
+		id: "one",
+		url: "https://www.xiaoyuzhoufm.com/episode/one",
+		title: "Recent",
+	};
+	const archive = rss
+		.replace(
+			"<item>",
+			"<item><guid>newer</guid><title>Newer episode</title><link>https://www.xiaoyuzhoufm.com/episode/newer</link></item><item>",
+		)
+		.replace("https://example.org/episode</link>", recent.url + "</link>");
+	const get = vi.fn(async (address: string) => {
+		if (address.startsWith("https://itunes.apple.com/search")) {
+			return JSON.stringify({
+				results: [
+					{
+						collectionName: "Podcast",
+						feedUrl: "https://example.org/unrelated.xml",
+					},
+					{ collectionName: "Podcast", feedUrl: url },
+				],
+			});
+		}
+		return address === url ? archive : rss;
+	});
+	const result = await readFeedHistory(
+		{ kind: "xiaoyuzhou", url: show, title: "Podcast" },
+		[recent],
+		{
+			get,
+			signal: new AbortController().signal,
+		},
+	);
+	expect(result.entries.map((entry) => entry.url)).toEqual([recent.url]);
+	expect(result.entries[0].transcriptUrl).toBe(
+		"https://example.org/transcript.vtt",
+	);
+});
+
+it("uses a WordPress site's public posts API for older blog entries", async () => {
+	const blog = "https://example.org/en/feed/";
+	const signal = new AbortController().signal;
+	const get = vi.fn(async (address: string) => {
+		if (address === blog)
+			return `<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>
+				<title>Blog</title><atom:link rel="self" href="${blog}" />
+				<link>https://example.org/en/</link><generator>https://wordpress.org/?v=6</generator>
+			</channel></rss>`;
+		return JSON.stringify({
+			status: 200,
+			headers: { "X-WP-TotalPages": 3 },
+			body: [
+				{
+					id: 12,
+					link: "https://example.org/en/old/",
+					title: { rendered: "Past &amp; present" },
+				},
+			],
+		});
+	});
+	const first = await readFeed(blog, { get, signal });
+	expect(first.history).toEqual({
+		kind: "wordpress",
+		url: "https://example.org/en/wp-json/wp/v2/posts",
+		page: 1,
+	});
+	if (!first.history) throw new Error("Missing WordPress archive");
+	const older = await readFeedHistory(first.history, first.entries, {
+		get,
+		signal,
+	});
+	expect(older.entries[0]).toMatchObject({ title: "Past & present" });
+	expect(older.history).toMatchObject({ page: 2 });
+});
+
+it.each(["/?feed=rss2&cat=123", "/?feed=rss2&tag=foo", "/category/news/feed/"])(
+	"does not use the entire WordPress site history for a filtered feed at %s",
+	async (path) => {
+		const get = vi.fn(
+			async () =>
+				'<rss version="2.0"><channel><title>Blog</title><link>https://example.org/</link><generator>https://wordpress.org/?v=6</generator></channel></rss>',
+		);
+		const feed = await readFeed("https://example.org" + path, {
+			get,
+			signal: new AbortController().signal,
+		});
+		expect(feed.history).toBeUndefined();
+	},
+);
+
+it("retains loaded history across refresh and never counts overlapping history as new", async () => {
+	const store = storeFixture().create();
+	const head = {
+		id: "newest",
+		title: "Newest",
+		url: "https://example.org/1",
+	};
+	const old = { id: "wp:2", title: "Old", url: "https://example.org/2" };
+	await store.updateFeed(url, {
+		title: "Blog",
+		entries: [head],
+		history: { kind: "feed", url: url + "?page=2" },
+	});
+	expect(
+		await store.appendHistory(url, { title: "Blog", entries: [head, old] }),
+	).toEqual([old]);
+	expect(
+		await store.updateFeed(url, {
+			title: "Blog",
+			entries: [head, { ...old, id: "rss:2" }],
+		}),
+	).toEqual([]);
+	const [source] = (await store.read()).subscriptions;
+	expect(source.entries.map((entry) => entry.url)).toEqual([
+		head.url,
+		old.url,
+	]);
+	expect(source.history).toBeNull();
+});
+
+it("retains podcast episodes with distinct GUIDs and a shared public link", async () => {
+	const store = storeFixture().create();
+	const episode = (id: string) => ({
+		id,
+		title: id,
+		url: "https://example.org/podcast",
+		audioUrl: `https://example.org/${id}.mp3`,
+	});
+	const first = episode("first");
+	const second = episode("second");
+	await store.updateFeed(url, { title: "Podcast", entries: [second] });
+	expect(
+		await store.appendHistory(url, {
+			title: "Podcast",
+			entries: [second, first],
+		}),
+	).toEqual([first]);
+	expect((await store.read()).subscriptions[0].entries).toEqual([
+		second,
+		first,
+	]);
+	const third = episode("third");
+	expect(
+		await store.updateFeed(url, {
+			title: "Podcast",
+			entries: [third, second],
+		}),
+	).toEqual([third]);
+	expect((await store.read()).subscriptions[0].entries).toEqual([
+		third,
+		second,
+		first,
+	]);
+});
+
+it("skips newer WordPress posts when history is opened before checking for updates", async () => {
+	const get = vi.fn(async (address: string) => {
+		const query = new URL(address).searchParams;
+		expect(query.get("rest_route")).toBe("/wp/v2/posts");
+		const post = (id: number) => ({
+			id,
+			link: `https://example.org/?p=${id}`,
+		});
+		return JSON.stringify({
+			status: 200,
+			headers: { "X-WP-TotalPages": 3 },
+			body:
+				query.get("page") === "1"
+					? [post(5), post(4)]
+					: [post(3), post(2), post(1)],
+		});
+	});
+	const signal = new AbortController().signal;
+	const first = await readFeed("https://example.org/?feed=rss2", {
+		get: async () =>
+			'<rss version="2.0"><channel><title>Blog</title><link>https://example.org/</link><generator>WordPress</generator><item><link>https://example.org/?p=2</link><title>Latest seen</title></item></channel></rss>',
+		signal,
+	});
+	if (!first.history) throw new Error("Missing WordPress archive");
+	const newer = await readFeedHistory(first.history, first.entries, {
+		get,
+		signal,
+	});
+	expect(newer.entries).toEqual([]);
+	if (!newer.history) throw new Error("Missing next archive page");
+	const older = await readFeedHistory(newer.history, first.entries, {
+		get,
+		signal,
+	});
+	expect(older.entries.map((entry) => entry.id)).toEqual(["wp:2", "wp:1"]);
 });

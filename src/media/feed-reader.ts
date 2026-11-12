@@ -12,12 +12,18 @@ export interface FeedEntry extends SourceLink {
 	id: string;
 	title: string;
 }
+export type FeedHistory =
+	| { kind: "feed"; url: string }
+	| { kind: "wordpress"; url: string; page: number; seekKnown?: boolean }
+	| { kind: "xiaoyuzhou"; url: string; title: string };
+
 export interface SourceFeed {
 	title: string;
 	entries: FeedEntry[];
+	history?: FeedHistory;
 }
 
-interface ReadFeedOptions {
+export interface ReadFeedOptions {
 	get: FetchSourceText;
 	signal: AbortSignal;
 	run?: RunTool;
@@ -30,7 +36,12 @@ function child(node: Element, name: string): Element | undefined {
 }
 
 function text(node: Element, name: string): string | undefined {
-	return child(node, name)?.textContent?.trim() || undefined;
+	for (const element of Array.from(node.children)) {
+		if (element.localName !== name) continue;
+		const value = element.textContent?.trim();
+		if (value) return value;
+	}
+	return undefined;
 }
 
 function optionalUrl(
@@ -43,6 +54,37 @@ function optionalUrl(
 	} catch {
 		return undefined;
 	}
+}
+
+function feedHistory(channel: Element, base: string): FeedHistory | undefined {
+	const next = Array.from(channel.children).find(
+		(element) =>
+			element.localName === "link" &&
+			["next", "prev-archive"].includes(
+				element.getAttribute("rel") ?? "",
+			),
+	);
+	const nextUrl = optionalUrl(next?.getAttribute("href"), base);
+	if (nextUrl && nextUrl !== base) return { kind: "feed", url: nextUrl };
+
+	if (!/wordpress/i.test(text(channel, "generator") ?? "")) return;
+	const siteUrl = optionalUrl(text(channel, "link"), base);
+	if (!siteUrl) return;
+	const site = new URL(siteUrl);
+	const feed = new URL(base);
+	const home = site.pathname.replace(/\/?$/, "/");
+	const prettyFeed =
+		feed.pathname.replace(/\/$/, "") === home + "feed" && !feed.search;
+	const plainFeed =
+		feed.pathname === home && feed.searchParams.toString() === "feed=rss2";
+	if ((!prettyFeed && !plainFeed) || feed.origin !== site.origin) return;
+	site.pathname = home;
+	const posts = new URL(
+		prettyFeed ? "wp-json/wp/v2/posts" : "index.php",
+		site,
+	);
+	if (plainFeed) posts.searchParams.set("rest_route", "/wp/v2/posts");
+	return { kind: "wordpress", url: posts.href, page: 1 };
 }
 
 function parseFeed(body: string, base: string): SourceFeed | undefined {
@@ -101,7 +143,12 @@ function parseFeed(body: string, base: string): SourceFeed | undefined {
 			transcriptType: transcript?.getAttribute("type") ?? undefined,
 		});
 	}
-	return { title: text(channel, "title") || base, entries };
+	const history = feedHistory(channel, base);
+	return {
+		title: text(channel, "title") || base,
+		entries,
+		...(history && { history }),
+	};
 }
 
 interface XiaoyuzhouEpisode {
@@ -120,15 +167,25 @@ function xiaoyuzhouFeed(doc: Document, url: URL): SourceFeed {
 	const { props } = JSON.parse(raw) as {
 		props?: {
 			pageProps?: {
-				podcast?: { title?: string; episodes?: XiaoyuzhouEpisode[] };
+				podcast?: {
+					title?: string;
+					episodeCount?: number;
+					episodes?: XiaoyuzhouEpisode[];
+				};
 			};
 		};
 	};
 	const podcast = props?.pageProps?.podcast;
 	if (!podcast?.episodes)
 		throw new Error("Enter a Xiaoyuzhou podcast show URL.");
+	const title = podcast.title || url.href;
+	const history: FeedHistory | undefined =
+		podcast.title && (podcast.episodeCount ?? 0) > podcast.episodes.length
+			? { kind: "xiaoyuzhou", url: url.href, title }
+			: undefined;
 	return {
-		title: podcast.title || url.href,
+		title,
+		...(history && { history }),
 		entries: podcast.episodes.flatMap((episode) =>
 			episode.eid
 				? [
@@ -216,7 +273,7 @@ async function bilibiliFeed(
 	};
 }
 
-async function requireXml(
+export async function requireXml(
 	url: string,
 	{ get, signal }: ReadFeedOptions,
 ): Promise<SourceFeed> {
@@ -284,12 +341,12 @@ export async function readFeed(
 	const xml = parseFeed(raw, url.href);
 	if (xml) return xml;
 	const html = new DOMParser().parseFromString(raw, "text/html");
-	if (siteIs(url, "xiaoyuzhoufm.com")) return xiaoyuzhouFeed(html, url);
 	const alternate = html.querySelector(
 		'link[rel~="alternate"][type="application/rss+xml"],link[rel~="alternate"][type="application/atom+xml"]',
 	);
 	const feedUrl = optionalUrl(alternate?.getAttribute("href"), url.href);
 	if (feedUrl) return requireXml(feedUrl, options);
+	if (siteIs(url, "xiaoyuzhoufm.com")) return xiaoyuzhouFeed(html, url);
 	if (siteIs(url, "youtube.com")) {
 		const channel =
 			html

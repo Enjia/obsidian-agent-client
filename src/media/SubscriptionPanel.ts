@@ -1,13 +1,18 @@
 import { Modal, setIcon, type App } from "obsidian";
+import { readFeedHistory } from "./feed-history";
 import { readFeed } from "./feed-reader";
 import type { MediaStore, Subscription } from "./media-store";
 import { fetchSourceText } from "./source-fetch";
 import { siteIs, type SourceLink } from "./source-reader";
 
+const PAGE_SIZE = 20;
+
 interface SubscriptionCheckResults {
 	newEntries: Map<string, Set<string>>;
 	failures: Map<string, string>;
 	expandedSources: Map<string, boolean>;
+	visibleCounts: Map<string, number>;
+	historyNotices: Map<string, string>;
 	scrollTop: number;
 }
 
@@ -17,6 +22,8 @@ export class SubscriptionModal extends Modal {
 		newEntries: new Map(),
 		failures: new Map(),
 		expandedSources: new Map(),
+		visibleCounts: new Map(),
+		historyNotices: new Map(),
 		scrollTop: 0,
 	};
 
@@ -74,13 +81,19 @@ function sourceIcon(source: Subscription): { icon: string; label: string } {
 
 export function mountSubscriptions(
 	container: HTMLElement,
-	store: Pick<MediaStore, "read" | "updateFeed" | "remove">,
+	store: Pick<MediaStore, "read" | "updateFeed" | "appendHistory" | "remove">,
 	openEntry: (link: SourceLink) => void,
 	signal: AbortSignal,
 	state: SubscriptionCheckResults,
 	scrollRegion = container,
 ): void {
-	const { newEntries, failures, expandedSources } = state;
+	const {
+		newEntries,
+		failures,
+		expandedSources,
+		visibleCounts,
+		historyNotices,
+	} = state;
 	const section = container.createDiv({
 		cls: "agent-client-media-subscriptions",
 	});
@@ -120,11 +133,12 @@ export function mountSubscriptions(
 	const revealAfterCheck = new Set<string>();
 	let busy = false;
 
-	const read = (url: string) =>
-		readFeed(url, {
-			get: (url, headers) => fetchSourceText(url, headers, signal),
-			signal,
-		});
+	const options = {
+		get: (url: string, headers?: Record<string, string>) =>
+			fetchSourceText(url, headers, signal),
+		signal,
+	};
+	const read = (url: string) => readFeed(url, options);
 	const savePosition = () => {
 		for (const [url, details] of displayed) {
 			expandedSources.set(url, details.open);
@@ -187,7 +201,11 @@ export function mountSubscriptions(
 						),
 					]
 				: source.entries;
-			for (const entry of entries) {
+			const limit = Math.max(
+				visibleCounts.get(source.url) ?? PAGE_SIZE,
+				latest?.size ?? 0,
+			);
+			for (const entry of entries.slice(0, limit)) {
 				const item = items.createEl("li");
 				if (latest?.has(entry.id))
 					item.createSpan({
@@ -203,7 +221,40 @@ export function mountSubscriptions(
 					openEntry(entry);
 				});
 			}
+			const canLoadEarlier =
+				entries.length > limit || source.history !== null;
+			if (canLoadEarlier || historyNotices.get(source.url)) {
+				const historyControls = details.createDiv({
+					cls: "agent-client-media-controls",
+				});
+				const progress = historyControls.createSpan({
+					text: historyNotices.get(source.url),
+					attr: { role: "status" },
+				});
+				if (canLoadEarlier) {
+					const earlier = historyControls.createEl("button", {
+						text: "加载更早",
+						attr: { type: "button" },
+					});
+					historyControls.prepend(earlier);
+					earlier.addEventListener("click", () => {
+						void act(
+							async () => {
+								const message = await loadEarlier(
+									source,
+									limit,
+								);
+								historyNotices.set(source.url, message);
+								return message;
+							},
+							progress,
+							earlier,
+						);
+					});
+				}
+			}
 			details
+				.createDiv({ cls: "agent-client-media-controls" })
 				.createEl("button", {
 					text: "移除订阅",
 					attr: { type: "button" },
@@ -216,6 +267,8 @@ export function mountSubscriptions(
 							newEntries.delete(source.url);
 							failures.delete(source.url);
 							expandedSources.delete(source.url);
+							visibleCounts.delete(source.url);
+							historyNotices.delete(source.url);
 							displayed.delete(source.url);
 							return "已移除订阅。";
 						}),
@@ -223,6 +276,47 @@ export function mountSubscriptions(
 		}
 		revealAfterCheck.clear();
 		scrollRegion.scrollTop = state.scrollTop;
+	};
+
+	const loadEarlier = async (
+		source: Subscription,
+		limit: number,
+	): Promise<string> => {
+		if (source.entries.length <= limit) {
+			let history = source.history;
+			let known = source.entries;
+			if (history === undefined) {
+				const head = await read(source.url);
+				signal.throwIfAborted();
+				const updated = await store.updateFeed(source.url, head, true);
+				if (updated.length) {
+					newEntries.set(
+						source.url,
+						new Set([
+							...(newEntries.get(source.url) ?? []),
+							...updated.map((entry) => entry.id),
+						]),
+					);
+				}
+				const current = (await store.read()).subscriptions.find(
+					(item) => item.url === source.url,
+				);
+				history = current?.history;
+				known = current?.entries ?? known;
+			}
+			if (history && known.length <= limit) {
+				const page = await readFeedHistory(history, known, options);
+				signal.throwIfAborted();
+				const loaded = await store.appendHistory(source.url, page);
+				if (!loaded.length && page.history)
+					return "此页没有可添加的旧条目，可继续加载。";
+				if (!loaded.length) return "已显示来源提供的全部条目。";
+			} else if (known.length <= limit) {
+				return "已显示来源提供的全部条目。";
+			}
+		}
+		visibleCounts.set(source.url, limit + PAGE_SIZE);
+		return "";
 	};
 
 	const check = async (sources: Subscription[]): Promise<string> => {
@@ -255,20 +349,26 @@ export function mountSubscriptions(
 		return `${count} 条新增${failed ? `，${failed} 个来源检查失败` : ""}。`;
 	};
 
-	const act = async (operation: () => Promise<string>) => {
+	const act = async (
+		operation: () => Promise<string>,
+		progress: HTMLElement = status,
+		trigger?: HTMLButtonElement,
+	) => {
 		if (busy || signal.aborted) return;
 		busy = refresh.disabled = submit.disabled = true;
-		status.setText("正在处理订阅…");
+		if (trigger) trigger.disabled = true;
+		progress.setText("正在处理订阅…");
 		try {
 			const message = await operation();
 			render((await store.read()).subscriptions);
-			if (!signal.aborted) status.setText(message);
+			if (!signal.aborted && !trigger) status.setText(message);
 		} catch (error) {
 			if (!signal.aborted)
-				status.setText(
+				progress.setText(
 					error instanceof Error ? error.message : String(error),
 				);
 		} finally {
+			if (trigger) trigger.disabled = false;
 			busy = refresh.disabled = submit.disabled = false;
 		}
 	};

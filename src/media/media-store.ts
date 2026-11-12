@@ -1,4 +1,4 @@
-import type { FeedEntry, SourceFeed } from "./feed-reader";
+import type { FeedEntry, FeedHistory, SourceFeed } from "./feed-reader";
 import { webUrl } from "./source-reader";
 
 interface MediaStorage {
@@ -13,6 +13,7 @@ export interface Subscription {
 	label?: string;
 	entries: FeedEntry[];
 	seen?: string[];
+	history?: FeedHistory | null;
 }
 
 interface MediaData {
@@ -25,6 +26,27 @@ function subscriptionUrl(raw: string): string {
 	const url = webUrl(raw);
 	url.hash = "";
 	return url.href;
+}
+
+function sameWordPressPost(
+	entry: FeedEntry,
+	other: FeedEntry | undefined,
+): boolean {
+	return Boolean(
+		other && (/^wp:\d+$/.test(entry.id) || /^wp:\d+$/.test(other.id)),
+	);
+}
+
+function uniqueEntries(entries: FeedEntry[]): FeedEntry[] {
+	const ids = new Set<string>();
+	const links = new Map<string, FeedEntry>();
+	return entries.filter((entry) => {
+		if (ids.has(entry.id) || sameWordPressPost(entry, links.get(entry.url)))
+			return false;
+		ids.add(entry.id);
+		links.set(entry.url, entry);
+		return true;
+	});
 }
 
 function legacySubscriptions(raw: Record<string, unknown>): Subscription[] {
@@ -96,10 +118,23 @@ export class MediaStore {
 		});
 	}
 
-	async updateFeed(
+	updateFeed(
 		url: string,
 		feed: SourceFeed,
 		existingOnly = false,
+	): Promise<FeedEntry[]> {
+		return this.saveFeed(url, feed, existingOnly, false);
+	}
+
+	appendHistory(url: string, feed: SourceFeed): Promise<FeedEntry[]> {
+		return this.saveFeed(url, feed, true, true);
+	}
+
+	private saveFeed(
+		url: string,
+		feed: SourceFeed,
+		existingOnly: boolean,
+		append: boolean,
 	): Promise<FeedEntry[]> {
 		const normalized = subscriptionUrl(url);
 		return this.change(async () => {
@@ -108,22 +143,37 @@ export class MediaStore {
 				(subscription) => subscription.url === normalized,
 			);
 			if (!previous && existingOnly) return [];
-			const seen = new Set(previous?.seen);
-			const entries = Array.from(
-				new Map(
-					feed.entries.map((entry) => [entry.id, entry]),
-				).values(),
-			);
-			const added = previous?.seen
-				? entries.filter((entry) => !seen.has(entry.id))
-				: [];
-			for (const entry of entries) seen.add(entry.id);
+			const known = previous?.entries ?? [];
+			const seen = new Set([
+				...(previous?.seen ?? []),
+				...known.map(({ id }) => id),
+			]);
+			const links = new Map(known.map((entry) => [entry.url, entry]));
+			const incoming = uniqueEntries(feed.entries);
+			const added =
+				previous?.seen || append
+					? incoming.filter(
+							(entry) =>
+								!seen.has(entry.id) &&
+								!sameWordPressPost(entry, links.get(entry.url)),
+						)
+					: [];
+			for (const entry of incoming) seen.add(entry.id);
 			const next: Subscription = {
 				url: normalized,
-				title: previous?.label ?? feed.title,
+				title:
+					previous?.label ??
+					(append ? previous?.title : feed.title) ??
+					feed.title,
 				label: previous?.label,
-				entries,
+				entries: append
+					? uniqueEntries([...known, ...incoming])
+					: uniqueEntries([...incoming, ...known]),
 				seen: Array.from(seen),
+				history:
+					!append && previous?.history !== undefined
+						? previous.history
+						: (feed.history ?? null),
 			};
 			await this.write({
 				...data,

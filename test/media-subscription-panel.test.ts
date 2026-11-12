@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import { mountSubscriptions } from "../src/media/SubscriptionPanel";
+import { readFeedHistory } from "../src/media/feed-history";
 import { readFeed } from "../src/media/feed-reader";
 import { MediaStore } from "../src/media/media-store";
 
+vi.mock("../src/media/feed-history", () => ({ readFeedHistory: vi.fn() }));
 vi.mock("../src/media/feed-reader", () => ({ readFeed: vi.fn() }));
 vi.mock("obsidian", () => ({
 	Modal: class {},
@@ -18,25 +20,23 @@ function installElementHelpers() {
 		cls?: string;
 		attr?: Record<string, string>;
 	};
-	const create = function (
-		this: HTMLElement,
-		tag: string,
-		options?: Options,
-	) {
+	const create = (parent: HTMLElement, tag: string, options?: Options) => {
 		const child = document.createElement(tag);
 		child.textContent = options?.text ?? "";
 		if (options?.cls) child.className = options.cls;
 		for (const [name, value] of Object.entries(options?.attr ?? {}))
 			child.setAttribute(name, value);
-		return this.appendChild(child);
+		return parent.appendChild(child);
 	};
 	const helpers = {
-		createEl: create,
+		createEl(this: HTMLElement, tag: string, options?: Options) {
+			return create(this, tag, options);
+		},
 		createDiv(this: HTMLElement, options?: Options) {
-			return create.call(this, "div", options);
+			return create(this, "div", options);
 		},
 		createSpan(this: HTMLElement, options?: Options) {
-			return create.call(this, "span", options);
+			return create(this, "span", options);
 		},
 		setText(this: HTMLElement, text: string) {
 			this.textContent = text;
@@ -98,10 +98,12 @@ it("opens on cached subscriptions and highlights new items with a retry on the f
 		newEntries: new Map<string, Set<string>>(),
 		failures: new Map<string, string>(),
 		expandedSources: new Map<string, boolean>(),
+		visibleCounts: new Map<string, number>(),
+		historyNotices: new Map<string, string>(),
 		scrollTop: 0,
 	};
 	const button = (name: string) => {
-		const match = [...box.querySelectorAll("button")].find(
+		const match = Array.from(box.querySelectorAll("button")).find(
 			(button) => button.textContent === name,
 		);
 		expect(match).toBeDefined();
@@ -175,6 +177,86 @@ it("opens on cached subscriptions and highlights new items with a retry on the f
 					?.parentElement?.textContent,
 			).toContain("Newly published"),
 		);
+	} finally {
+		controller.abort();
+		reset();
+	}
+});
+
+it("shows old episodes in pages and restores the page when returning from an episode", async () => {
+	const reset = installElementHelpers();
+	const controller = new AbortController();
+	const box = document.createElement("div");
+	const url = "https://www.xiaoyuzhoufm.com/podcast/example";
+	const episodes = Array.from({ length: 41 }, (_, index) => ({
+		id: String(257 - index),
+		title: `E${257 - index}`,
+		url: `https://www.xiaoyuzhoufm.com/episode/${257 - index}`,
+	}));
+	const state = {
+		newEntries: new Map<string, Set<string>>(),
+		failures: new Map<string, string>(),
+		expandedSources: new Map([[url, true]]),
+		visibleCounts: new Map<string, number>(),
+		historyNotices: new Map<string, string>(),
+		scrollTop: 0,
+	};
+	let saved = JSON.stringify({
+		version: 1,
+		subscriptions: [
+			{ url, title: "Podcast", entries: episodes.slice(0, 15) },
+		],
+	});
+	const store = new MediaStore(
+		{
+			exists: async () => true,
+			read: async () => saved,
+			write: async (_path, content) => {
+				saved = content;
+			},
+		},
+		"media.json",
+	);
+	const cursor = { kind: "xiaoyuzhou" as const, url, title: "Podcast" };
+	const head = vi
+		.mocked(readFeed)
+		.mockReset()
+		.mockResolvedValue({
+			title: "Podcast",
+			entries: episodes.slice(0, 15),
+			history: cursor,
+		});
+	const history = vi.mocked(readFeedHistory).mockResolvedValue({
+		title: "Podcast",
+		entries: episodes,
+	});
+	const open = vi.fn();
+	const mount = () =>
+		mountSubscriptions(box, store, open, controller.signal, state);
+	const button = (title: string) =>
+		Array.from(box.querySelectorAll("button")).find(
+			(entry) => entry.textContent === title,
+		);
+	try {
+		mount();
+		await vi.waitFor(() => expect(button("E243")).toBeDefined());
+		expect(button("E242")).toBeUndefined();
+		expect(head).not.toHaveBeenCalled();
+		button("加载更早")?.click();
+		await vi.waitFor(() => expect(button("E218")).toBeDefined());
+		expect(button("E217")).toBeUndefined();
+		expect(history).toHaveBeenCalledOnce();
+		button("E242")?.click();
+		expect(open).toHaveBeenCalledWith(episodes[15]);
+		box.replaceChildren();
+		mount();
+		await vi.waitFor(() => expect(button("E218")).toBeDefined());
+		expect(box.querySelector("details")?.open).toBe(true);
+		button("加载更早")?.click();
+		await vi.waitFor(() => expect(button("E217")).toBeDefined());
+		expect(button("加载更早")).toBeUndefined();
+		expect(head).toHaveBeenCalledOnce();
+		expect(history).toHaveBeenCalledOnce();
 	} finally {
 		controller.abort();
 		reset();

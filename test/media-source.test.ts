@@ -72,6 +72,16 @@ it("chooses human captions before automatic captions and prefers the original la
 		language: "zh",
 	});
 	expect(run).toHaveBeenCalledTimes(1);
+	expect(run).toHaveBeenCalledWith(
+		expect.any(String),
+		expect.arrayContaining([
+			"--skip-download",
+			"--write-subs",
+			"--write-auto-subs",
+		]),
+		signal,
+		expect.any(Number),
+	);
 });
 
 it("surfaces a caption fetch failure without triggering a full download", async () => {

@@ -238,6 +238,8 @@ export async function readSource(
 				...videoToolArgs(),
 				"--no-playlist",
 				"--skip-download",
+				"--write-subs",
+				"--write-auto-subs",
 				"--dump-single-json",
 				"--",
 				source,

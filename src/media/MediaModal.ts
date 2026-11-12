@@ -1,14 +1,6 @@
-import { mountSubscriptions } from "./SubscriptionPanel";
 import type { MediaStore } from "./media-store";
 import { fetchSourceText } from "./source-fetch";
-import {
-	Modal,
-	normalizePath,
-	Notice,
-	requestUrl,
-	Setting,
-	type App,
-} from "obsidian";
+import { Modal, normalizePath, Notice, Setting, type App } from "obsidian";
 import { writeFile } from "fs/promises";
 import { extname, join } from "path";
 import {
@@ -34,6 +26,7 @@ interface SummaryChat {
 export class MediaModal extends Modal {
 	private job?: AbortController;
 	private view?: AbortController;
+	private pendingSource?: SourceLink;
 	private recorder?: MediaRecorder;
 	private stream?: MediaStream;
 	private microphoneRequest = false;
@@ -54,17 +47,26 @@ export class MediaModal extends Modal {
 		super(app);
 	}
 
+	openSource(link: SourceLink): void {
+		this.pendingSource = link;
+		this.open();
+	}
+
 	onOpen(): void {
 		this.closed = false;
 		const view = new AbortController();
 		this.view = view;
 		this.setTitle("Read, transcribe and summarize");
+		const source = this.pendingSource;
+		this.pendingSource = undefined;
 		let sourceInput: HTMLInputElement;
 		const readLink = () => void this.readLink({ url: sourceInput.value });
 		new Setting(this.contentEl)
 			.setName("Article, podcast or video link")
 			.addText((text) => {
-				sourceInput = text.setPlaceholder("Source URL").inputEl;
+				sourceInput = text
+					.setPlaceholder("Source URL")
+					.setValue(source?.url ?? "").inputEl;
 				sourceInput.addEventListener("keydown", (event) => {
 					if (event.key === "Enter") {
 						event.preventDefault();
@@ -172,12 +174,7 @@ export class MediaModal extends Modal {
 					.setCta()
 					.onClick(() => void this.summarize()),
 			);
-		mountSubscriptions(
-			this.contentEl,
-			this.store,
-			(link) => void this.readLink(link),
-			view.signal,
-		);
+		if (source) void this.readLink(source);
 	}
 
 	onClose(): void {

@@ -65,20 +65,20 @@ it("reports only newly observed entries, including after restart", async () => {
 	const second = { id: "2", title: "Second", url: "https://example.org/2" };
 	expect(
 		await store.updateFeed(url, { title: "Blog", entries: [first] }),
-	).toBe(0);
+	).toEqual([]);
 	expect(
 		await store.updateFeed(url, {
 			title: "Blog",
 			entries: [second, first, second],
 		}),
-	).toBe(1);
+	).toEqual([second]);
 	const restarted = create();
 	expect(
 		await restarted.updateFeed(url, {
 			title: "Blog",
 			entries: [first, second],
 		}),
-	).toBe(0);
+	).toEqual([]);
 	expect((await restarted.read()).subscriptions[0].entries).toHaveLength(2);
 });
 
@@ -140,7 +140,7 @@ it("counts the first entry from a previously empty feed", async () => {
 				},
 			],
 		}),
-	).toBe(1);
+	).toMatchObject([{ id: "1" }]);
 });
 
 it("resolves a YouTube handle through the published channel feed", async () => {

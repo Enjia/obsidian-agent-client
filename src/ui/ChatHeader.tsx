@@ -57,6 +57,7 @@ export interface SidebarHeaderProps {
 	/** Callback to open session history */
 	onOpenHistory?: () => void;
 	onOpenMedia: () => void;
+	onOpenSubscriptions: () => void;
 }
 
 /**
@@ -167,6 +168,7 @@ function SidebarHeader({
 	onShowMenu,
 	onOpenHistory,
 	onOpenMedia,
+	onOpenSubscriptions,
 }: SidebarHeaderProps) {
 	return (
 		<div className="nav-header agent-client-chat-view-header">
@@ -204,6 +206,15 @@ function SidebarHeader({
 					onClick={onOpenMedia}
 				>
 					<LucideIcon name="file-input" />
+				</button>
+				<button
+					type="button"
+					className="clickable-icon nav-action-button"
+					aria-label="订阅"
+					title="订阅"
+					onClick={onOpenSubscriptions}
+				>
+					<LucideIcon name="rss" />
 				</button>
 				<NavActionButton
 					icon="more-vertical"

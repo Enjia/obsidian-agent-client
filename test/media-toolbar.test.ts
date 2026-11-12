@@ -11,10 +11,11 @@ vi.mock("obsidian", () => ({
 	DropdownComponent: class {},
 }));
 
-it("opens media intake from a labeled sidebar toolbar button", async () => {
+it("provides separate sidebar toolbar buttons for media and subscriptions", async () => {
 	const el = document.createElement("div");
 	const root = createRoot(el);
 	const openMedia = vi.fn();
+	const openSubscriptions = vi.fn();
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	try {
 		await act(async () =>
@@ -27,6 +28,7 @@ it("opens media intake from a labeled sidebar toolbar button", async () => {
 					onExportChat: vi.fn(),
 					onShowMenu: vi.fn(),
 					onOpenMedia: openMedia,
+					onOpenSubscriptions: openSubscriptions,
 				}),
 			),
 		);
@@ -35,6 +37,13 @@ it("opens media intake from a labeled sidebar toolbar button", async () => {
 		);
 		expect(button?.querySelector('[data-icon="file-input"]')).toBeTruthy();
 		button?.click();
+		expect(openMedia).toHaveBeenCalledOnce();
+		const subscriptions = el.querySelector<HTMLButtonElement>(
+			'button[aria-label="订阅"]',
+		);
+		expect(subscriptions?.querySelector('[data-icon="rss"]')).toBeTruthy();
+		subscriptions?.click();
+		expect(openSubscriptions).toHaveBeenCalledOnce();
 		expect(openMedia).toHaveBeenCalledOnce();
 	} finally {
 		await act(async () => root.unmount());

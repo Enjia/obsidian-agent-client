@@ -1,4 +1,6 @@
 import { MediaModal } from "./media/MediaModal";
+import { SubscriptionModal } from "./media/SubscriptionPanel";
+import type { SourceLink } from "./media/source-reader";
 import { MediaStore } from "./media/media-store";
 import {
 	Plugin,
@@ -273,6 +275,7 @@ export default class AgentClientPlugin extends Plugin {
 	/** Floating button container (independent from chat view instances) */
 	private floatingButton: FloatingButtonContainer | null = null;
 	private mediaModal?: MediaModal;
+	private subscriptionModal?: SubscriptionModal;
 	private mediaStore!: MediaStore;
 	/** Counter for generating unique floating chat instance IDs */
 	private floatingChatCounter = 0;
@@ -489,7 +492,7 @@ export default class AgentClientPlugin extends Plugin {
 		);
 	}
 
-	openMediaIntake(): void {
+	openMediaIntake(source?: SourceLink): void {
 		this.mediaModal ??= new MediaModal(
 			this.app,
 			{
@@ -506,12 +509,24 @@ export default class AgentClientPlugin extends Plugin {
 			},
 			this.mediaStore,
 		);
-		this.mediaModal.open();
+		if (source) this.mediaModal.openSource(source);
+		else this.mediaModal.open();
+	}
+
+	openSubscriptions(): void {
+		this.subscriptionModal ??= new SubscriptionModal(
+			this.app,
+			this.mediaStore,
+			(source) => this.openMediaIntake(source),
+		);
+		this.subscriptionModal.open();
 	}
 
 	onunload() {
 		this.mediaModal?.close();
 		this.mediaModal = undefined;
+		this.subscriptionModal?.close();
+		this.subscriptionModal = undefined;
 		// Unmount floating button
 		this.floatingButton?.unmount();
 		this.floatingButton = null;

@@ -2804,3 +2804,30 @@ If your plugin does not need CSS, delete this file.
 .agent-client-media-subscriptions summary {
 	cursor: pointer;
 }
+
+.agent-client-media-subscription-icon {
+	display: inline-flex;
+	vertical-align: middle;
+	margin-inline-end: 0.4em;
+}
+
+.agent-client-media-subscription-new {
+	color: var(--text-accent);
+	font-weight: var(--font-semibold);
+	margin-inline-end: 0.5em;
+}
+
+.agent-client-media-subscription-error {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	align-items: center;
+	color: var(--text-error);
+}
+
+.agent-client-media-subscriptions .agent-client-media-subscription-entry {
+	height: auto;
+	min-height: var(--input-height);
+	white-space: normal;
+	text-align: start;
+}

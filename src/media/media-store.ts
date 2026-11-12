@@ -100,23 +100,23 @@ export class MediaStore {
 		url: string,
 		feed: SourceFeed,
 		existingOnly = false,
-	): Promise<number> {
+	): Promise<FeedEntry[]> {
 		const normalized = subscriptionUrl(url);
 		return this.change(async () => {
 			const data = await this.readFile();
 			const previous = data.subscriptions.find(
 				(subscription) => subscription.url === normalized,
 			);
-			if (!previous && existingOnly) return 0;
+			if (!previous && existingOnly) return [];
 			const seen = new Set(previous?.seen);
 			const entries = Array.from(
 				new Map(
 					feed.entries.map((entry) => [entry.id, entry]),
 				).values(),
 			);
-			const newCount = previous?.seen
-				? entries.filter((entry) => !seen.has(entry.id)).length
-				: 0;
+			const added = previous?.seen
+				? entries.filter((entry) => !seen.has(entry.id))
+				: [];
 			for (const entry of entries) seen.add(entry.id);
 			const next: Subscription = {
 				url: normalized,
@@ -133,7 +133,7 @@ export class MediaStore {
 						)
 					: [...data.subscriptions, next],
 			});
-			return newCount;
+			return added;
 		});
 	}
 

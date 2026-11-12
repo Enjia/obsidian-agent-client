@@ -1470,6 +1470,7 @@ export const ChatPanel = React.memo(function ChatPanel({
 				onShowMenu={handleShowSidebarMenu}
 				onOpenHistory={handleOpenHistory}
 				onOpenMedia={() => plugin.openMediaIntake()}
+				onOpenSubscriptions={() => plugin.openSubscriptions()}
 			/>
 		) : variant === "floating" ? (
 			// Floating variant always shows the agent selector (no agent pinning).

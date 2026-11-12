@@ -167,13 +167,18 @@ it("normalizes public Bilibili creator videos from the playlist extractor", asyn
 		}),
 		stderr: "",
 	}));
+	const get = vi.fn(
+		async () => '{"data":{"title":"Video","owner":{"name":"Creator"}}}',
+	);
 	const feed = await readFeed("https://space.bilibili.com/42", {
-		get: vi.fn(
-			async () => '{"data":{"title":"Video","owner":{"name":"Creator"}}}',
-		),
+		get,
 		run,
 		signal: new AbortController().signal,
 	});
+	expect(get).toHaveBeenCalledWith(
+		"https://api.bilibili.com/x/web-interface/view?bvid=BV123",
+		{ "User-Agent": expect.stringContaining("Chrome/") },
+	);
 	expect(feed.title).toBe("Creator");
 	expect(feed.entries[0]).toEqual({
 		id: "BV123",

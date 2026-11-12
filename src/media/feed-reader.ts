@@ -149,6 +149,9 @@ function xiaoyuzhouFeed(doc: Document, url: URL): SourceFeed {
 	};
 }
 
+const BILIBILI_USER_AGENT =
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
 async function bilibiliFeed(
 	mid: string,
 	{ run = runMediaTool, get, signal }: ReadFeedOptions,
@@ -188,6 +191,7 @@ async function bilibiliFeed(
 				const raw = await get(
 					"https://api.bilibili.com/x/web-interface/view?bvid=" +
 						encodeURIComponent(entry.id),
+					{ "User-Agent": BILIBILI_USER_AGENT },
 				);
 				const { data } = JSON.parse(raw) as {
 					data?: { title?: string; owner?: { name?: string } };

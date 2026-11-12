@@ -142,7 +142,7 @@ function xiaoyuzhouFeed(doc: Document, url: URL): SourceFeed {
 
 async function bilibiliFeed(
 	mid: string,
-	{ run = runMediaTool, signal }: ReadFeedOptions,
+	{ run = runMediaTool, get, signal }: ReadFeedOptions,
 ): Promise<SourceFeed> {
 	const url = `https://space.bilibili.com/${mid}/video`;
 	const { stdout } = await run(
@@ -165,17 +165,41 @@ async function bilibiliFeed(
 	};
 	if (!listing.entries)
 		throw new Error("Bilibili did not return a channel feed.");
-	return {
-		title: listing.title || url,
-		entries: listing.entries.flatMap((entry) => {
-			if (!entry?.id) return [];
-			const link =
-				optionalUrl(entry.url, url) ??
-				`https://www.bilibili.com/video/${encodeURIComponent(entry.id)}`;
-			return [
-				{ id: entry.id, title: entry.title || entry.id, url: link },
-			];
+	const rows = listing.entries.flatMap((entry) => {
+		if (!entry?.id) return [];
+		const link =
+			optionalUrl(entry.url, url) ??
+			`https://www.bilibili.com/video/${encodeURIComponent(entry.id)}`;
+		return [{ id: entry.id, title: entry.title || "", url: link }];
+	});
+	const described = await Promise.all(
+		rows.map(async (entry) => {
+			if (entry.title || !/^BV\w+$/i.test(entry.id)) return { entry };
+			try {
+				const raw = await get(
+					"https://api.bilibili.com/x/web-interface/view?bvid=" +
+						encodeURIComponent(entry.id),
+				);
+				const { data } = JSON.parse(raw) as {
+					data?: { title?: string; owner?: { name?: string } };
+				};
+				return {
+					entry: { ...entry, title: data?.title || "" },
+					owner: data?.owner?.name,
+				};
+			} catch {
+				return { entry };
+			}
 		}),
+	);
+	signal.throwIfAborted();
+	return {
+		title:
+			listing.title || described.find((row) => row.owner)?.owner || url,
+		entries: described.map(({ entry }) => ({
+			...entry,
+			title: entry.title || entry.id,
+		})),
 	};
 }
 

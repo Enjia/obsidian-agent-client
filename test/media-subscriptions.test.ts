@@ -90,7 +90,7 @@ it("imports legacy subscriptions once and keeps an intentional deletion", async 
 				{
 					url: "https://example.org",
 					feedUrl: url,
-					displayName: "My blog",
+					title: "My blog",
 				},
 			],
 		},
@@ -98,7 +98,7 @@ it("imports legacy subscriptions once and keeps an intentional deletion", async 
 			subscriptions: [
 				{
 					url: "https://www.youtube.com/@Example",
-					displayName: "Videos",
+					title: "Videos",
 				},
 			],
 		},
@@ -106,7 +106,7 @@ it("imports legacy subscriptions once and keeps an intentional deletion", async 
 			subscriptions: [
 				{
 					url: "https://www.xiaoyuzhoufm.com/podcast/abc",
-					displayName: "Pod",
+					title: "Pod",
 				},
 			],
 		},
@@ -118,6 +118,8 @@ it("imports legacy subscriptions once and keeps an intentional deletion", async 
 		"https://www.youtube.com/@Example",
 		"https://www.xiaoyuzhoufm.com/podcast/abc",
 	]);
+	await store.updateFeed(url, { title: "Public feed name", entries: [] });
+	expect((await store.read()).subscriptions[0].title).toBe("My blog");
 	await store.remove(url);
 	const restarted = create();
 	await restarted.importLegacy(old);
@@ -161,16 +163,18 @@ it("resolves a YouTube handle through the published channel feed", async () => {
 it("normalizes public Bilibili creator videos from the playlist extractor", async () => {
 	const run = vi.fn(async () => ({
 		stdout: JSON.stringify({
-			title: "Creator",
-			entries: [{ id: "BV123", title: "Video" }],
+			entries: [{ id: "BV123" }],
 		}),
 		stderr: "",
 	}));
 	const feed = await readFeed("https://space.bilibili.com/42", {
-		get: vi.fn(),
+		get: vi.fn(
+			async () => '{"data":{"title":"Video","owner":{"name":"Creator"}}}',
+		),
 		run,
 		signal: new AbortController().signal,
 	});
+	expect(feed.title).toBe("Creator");
 	expect(feed.entries[0]).toEqual({
 		id: "BV123",
 		title: "Video",

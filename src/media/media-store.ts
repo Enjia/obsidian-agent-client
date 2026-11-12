@@ -10,6 +10,7 @@ interface MediaStorage {
 export interface Subscription {
 	url: string;
 	title: string;
+	label?: string;
 	entries: FeedEntry[];
 	seen?: string[];
 }
@@ -37,7 +38,7 @@ function legacySubscriptions(raw: Record<string, unknown>): Subscription[] {
 		if (!Array.isArray(section?.subscriptions)) continue;
 		for (const record of section.subscriptions) {
 			if (!record || typeof record !== "object") continue;
-			const { url, feedUrl, displayName } = record as Record<
+			const { url, feedUrl, title, displayName } = record as Record<
 				string,
 				unknown
 			>;
@@ -50,12 +51,15 @@ function legacySubscriptions(raw: Record<string, unknown>): Subscription[] {
 			} catch {
 				continue;
 			}
+			const savedLabel = typeof title === "string" ? title : displayName;
+			const label =
+				typeof savedLabel === "string"
+					? savedLabel.trim() || undefined
+					: undefined;
 			sources.set(normalized, {
 				url: normalized,
-				title:
-					typeof displayName === "string" && displayName.trim()
-						? displayName
-						: normalized,
+				title: label || normalized,
+				label,
 				entries: [],
 			});
 		}
@@ -116,7 +120,8 @@ export class MediaStore {
 			for (const entry of entries) seen.add(entry.id);
 			const next: Subscription = {
 				url: normalized,
-				title: feed.title,
+				title: previous?.label ?? feed.title,
+				label: previous?.label,
 				entries,
 				seen: Array.from(seen),
 			};

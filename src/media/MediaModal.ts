@@ -285,7 +285,9 @@ export class MediaModal extends Modal {
 					title,
 					tools: this.tools,
 					signal,
-					progress: (status) => this.report(status),
+					progress: (status) => {
+						if (!signal.aborted) this.report(status);
+					},
 				});
 			}),
 		);
@@ -297,7 +299,9 @@ export class MediaModal extends Modal {
 				get: (url, headers) => fetchSourceText(url, headers, signal),
 				tools: this.tools,
 				signal,
-				progress: (status) => this.report(status),
+				progress: (status) => {
+					if (!signal.aborted) this.report(status);
+				},
 			}),
 		);
 	}

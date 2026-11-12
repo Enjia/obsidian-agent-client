@@ -324,6 +324,39 @@ export default class AgentClientPlugin extends Plugin {
 		);
 		ribbonIconEl.addClass("agent-client-ribbon-icon");
 
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file) => {
+				if (!(file instanceof TFile) || file.extension !== "md") return;
+
+				menu.addItem((item) =>
+					item
+						.setTitle("总结此笔记（新对话）")
+						.setIcon("bot-message-square")
+						.onClick(() => {
+							const path = JSON.stringify("./" + file.path);
+							const folder = file.parent?.path;
+							const title =
+								folder && folder !== "/"
+									? `${file.basename} · ${folder}`
+									: file.basename;
+							void this.runPromptInChat({
+								agentId: this.settings.defaultAgentId,
+								prompt: `总结《${title}》\n\n请读取当前笔记库内的文件 ${path} 的完整内容，概括其主旨、关键要点和结论。在对话中直接给出摘要。`,
+								autoSend: true,
+								omitActiveNote: true,
+								viewType: "right-pane",
+							}).catch((error: unknown) => {
+								getLogger().error(
+									"[Agent Client] Failed to open note summary chat:",
+									error,
+								);
+								new Notice("无法打开笔记摘要对话。");
+							});
+						}),
+				);
+			}),
+		);
+
 		this.addCommand({
 			id: "open-chat-view",
 			name: "Open chat view",

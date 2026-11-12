@@ -2782,3 +2782,17 @@ If your plugin does not need CSS, delete this file.
 	width: 16px;
 	height: 16px;
 }
+
+.agent-client-media-controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	margin-block: 0.75rem;
+}
+
+.agent-client-media-preview {
+	width: 100%;
+	min-height: 12rem;
+	resize: vertical;
+	margin-block: 0.75rem;
+}

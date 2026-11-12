@@ -1,3 +1,4 @@
+import { MediaModal } from "./media/MediaModal";
 import {
 	Plugin,
 	WorkspaceLeaf,
@@ -270,6 +271,7 @@ export default class AgentClientPlugin extends Plugin {
 	private _acpTeardownTimers = new Map<string, number>();
 	/** Floating button container (independent from chat view instances) */
 	private floatingButton: FloatingButtonContainer | null = null;
+	private mediaModal?: MediaModal;
 	/** Counter for generating unique floating chat instance IDs */
 	private floatingChatCounter = 0;
 	/** Guards against concurrent embed-id injection for the same block. */
@@ -279,6 +281,15 @@ export default class AgentClientPlugin extends Plugin {
 		await this.loadSettings();
 
 		initializeLogger(this.settings);
+		this.addCommand({
+			id: "open-media-intake",
+			name: "Read, transcribe and summarize media",
+			callback: () => {
+				this.mediaModal?.close();
+				this.mediaModal = new MediaModal(this.app);
+				this.mediaModal.open();
+			},
+		});
 
 		// Initialize settings store
 		this.settingsService = createSettingsService(this.settings, this);
@@ -474,6 +485,8 @@ export default class AgentClientPlugin extends Plugin {
 	}
 
 	onunload() {
+		this.mediaModal?.close();
+		this.mediaModal = undefined;
 		// Unmount floating button
 		this.floatingButton?.unmount();
 		this.floatingButton = null;

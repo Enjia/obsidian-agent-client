@@ -14,6 +14,7 @@ export class MediaModal extends Modal {
 	private recorder?: MediaRecorder;
 	private stream?: MediaStream;
 	private microphoneRequest = false;
+	private discardRecording = false;
 	private closed = false;
 	private material?: Material;
 	private preview!: HTMLTextAreaElement;
@@ -57,7 +58,15 @@ export class MediaModal extends Modal {
 		record.addEventListener("click", () => void this.record(record));
 		controls
 			.createEl("button", { text: "Cancel task" })
-			.addEventListener("click", () => this.job?.abort());
+			.addEventListener("click", () => {
+				this.job?.abort();
+				if (this.recorder || this.microphoneRequest) {
+					this.discardRecording = true;
+					if (this.recorder?.state === "recording")
+						this.recorder.stop();
+					this.report("Recording cancelled.");
+				}
+			});
 		this.status = this.contentEl.createDiv({ attr: { role: "status" } });
 		this.preview = this.contentEl.createEl("textarea", {
 			cls: "agent-client-media-preview",
@@ -83,11 +92,12 @@ export class MediaModal extends Modal {
 		}
 		if (this.job || this.recorder || this.microphoneRequest) return;
 		this.microphoneRequest = true;
+		this.discardRecording = false;
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({
 				audio: true,
 			});
-			if (this.closed) {
+			if (this.closed || this.discardRecording) {
 				stream.getTracks().forEach((track) => track.stop());
 				return;
 			}
@@ -98,13 +108,16 @@ export class MediaModal extends Modal {
 			recorder.ondataavailable = (event) => {
 				if (event.data.size) chunks.push(event.data);
 			};
-			recorder.onerror = () => this.report("Recording failed.");
+			recorder.onerror = () => {
+				this.discardRecording = true;
+				this.report("Recording failed.");
+			};
 			recorder.onstop = () => {
 				stream.getTracks().forEach((track) => track.stop());
 				this.stream = undefined;
 				this.recorder = undefined;
 				button.setText("Record");
-				if (!this.closed && chunks.length) {
+				if (!this.closed && !this.discardRecording && chunks.length) {
 					const blob = new Blob(chunks, { type: recorder.mimeType });
 					const suffix = recorder.mimeType.includes("mp4")
 						? ".m4a"

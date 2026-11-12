@@ -52,13 +52,13 @@ export const runMediaTool: RunTool = (command, args, signal, timeoutMs) => {
 			timeoutMs,
 		);
 		signal.addEventListener("abort", abort, { once: true });
-		child.stdout.on("data", (data: Buffer) => {
-			stdout += data.toString();
+		child.stdout.setEncoding("utf8").on("data", (data: string) => {
+			stdout += data;
 			if (stdout.length > 16 * 1024 * 1024)
 				stop(new Error(`${command} returned too much output.`));
 		});
-		child.stderr.on("data", (data: Buffer) => {
-			stderr = (stderr + data.toString()).slice(-8192);
+		child.stderr.setEncoding("utf8").on("data", (data: string) => {
+			stderr = (stderr + data).slice(-8192);
 		});
 		child.on("error", (error) => {
 			failure ??= new Error(`Could not run ${command}: ${error.message}`);

@@ -194,3 +194,16 @@ it("reads Xiaoyuzhou episodes and their public audio enclosure", async () => {
 		audioUrl: "https://example.org/audio.mp3",
 	});
 });
+
+it("keeps blog thumbnail enclosures out of the media path", async () => {
+	const feed = await readFeed(url, {
+		get: async () =>
+			rss
+				.replace('type="audio/mpeg"', 'type="image/jpeg"')
+				.replace("episode.mp3", "cover.jpg")
+				.replace(/<podcast:transcript[^>]+\/>/, ""),
+		signal: new AbortController().signal,
+	});
+	expect(feed.entries[0].audioUrl).toBeUndefined();
+	expect(feed.entries[0].url).toBe("https://example.org/episode");
+});

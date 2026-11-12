@@ -1,5 +1,6 @@
 import { resolveMediaTool, runMediaTool, type RunTool } from "./media-tools";
 import {
+	isMediaFile,
 	siteIs,
 	videoToolArgs,
 	webUrl,
@@ -72,10 +73,18 @@ function parseFeed(body: string, base: string): SourceFeed | undefined {
 					)
 					?.getAttribute("href")
 			: text(entry, "link");
-		const audioUrl = optionalUrl(
+		const enclosureUrl = optionalUrl(
 			enclosure?.getAttribute(isAtom ? "href" : "url"),
 			base,
 		);
+		const mime = enclosure?.getAttribute("type")?.toLowerCase() ?? "";
+		const audioUrl =
+			enclosureUrl &&
+			(/^(audio|video)\//.test(mime) ||
+				((!mime || mime === "application/octet-stream") &&
+					isMediaFile(new URL(enclosureUrl))))
+				? enclosureUrl
+				: undefined;
 		const transcript = child(entry, "transcript");
 		const transcriptUrl = optionalUrl(
 			transcript?.getAttribute("url"),

@@ -36,7 +36,7 @@ export function mountSubscriptions(
 			const details = list.createEl("details");
 			details.createEl("summary", { text: source.title });
 			const items = details.createEl("ul");
-			for (const entry of source.entries.slice(0, 20)) {
+			for (const entry of source.entries) {
 				items
 					.createEl("li")
 					.createEl("button", { text: entry.title })

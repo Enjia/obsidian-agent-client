@@ -65,7 +65,7 @@ function isVideoLink(url: URL): boolean {
 	].some((domain) => siteIs(url, domain));
 }
 
-function isMediaFile(url: URL): boolean {
+export function isMediaFile(url: URL): boolean {
 	return /\.(mp3|m4a|aac|ogg|opus|wav|flac|mp4|webm|m4v|mov|m3u8)$/i.test(
 		url.pathname,
 	);

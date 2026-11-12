@@ -60,7 +60,10 @@ export class MediaModal extends Modal {
 		const source = this.pendingSource;
 		this.pendingSource = undefined;
 		let sourceInput: HTMLInputElement;
-		const readLink = () => void this.readLink({ url: sourceInput.value });
+		const readLink = () => {
+			const url = sourceInput.value.trim();
+			void this.readLink(source?.url === url ? source : { url });
+		};
 		new Setting(this.contentEl)
 			.setName("Article, podcast or video link")
 			.addText((text) => {

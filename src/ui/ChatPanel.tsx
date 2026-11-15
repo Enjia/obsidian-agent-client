@@ -339,7 +339,6 @@ export const ChatPanel = React.memo(function ChatPanel({
 	// ============================================================
 	// Local State
 	// ============================================================
-	const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
 
 	// Input state (for broadcast commands)
 	const [inputValue, setInputValue] = useState("");
@@ -994,18 +993,6 @@ export const ChatPanel = React.memo(function ChatPanel({
 	}, [logger]);
 
 	// ============================================================
-	// Effects - Update Check
-	// ============================================================
-	useEffect(() => {
-		plugin
-			.checkForUpdates()
-			.then(setIsUpdateAvailable)
-			.catch((error) => {
-				logger.error("Failed to check for updates:", error);
-			});
-	}, [plugin, logger]);
-
-	// ============================================================
 	// Effects - Agent Update Check
 	// ============================================================
 	useEffect(() => {
@@ -1464,7 +1451,6 @@ export const ChatPanel = React.memo(function ChatPanel({
 			<ChatHeader
 				variant="sidebar"
 				agentLabel={activeAgentLabel}
-				isUpdateAvailable={isUpdateAvailable}
 				onNewChat={() => void handleNewChatWithPersist()}
 				onExportChat={() => void handleExportChat()}
 				onShowMenu={handleShowSidebarMenu}
@@ -1479,7 +1465,6 @@ export const ChatPanel = React.memo(function ChatPanel({
 				agentLabel={activeAgentLabel}
 				availableAgents={availableAgents}
 				currentAgentId={session.agentId}
-				isUpdateAvailable={isUpdateAvailable}
 				onAgentChange={(agentId) => void handleSwitchAgent(agentId)}
 				onShowMenu={handleShowFloatingMenu}
 				onMinimize={onMinimize}
@@ -1491,7 +1476,6 @@ export const ChatPanel = React.memo(function ChatPanel({
 			<ChatHeader
 				variant="embedded"
 				agentLabel={activeAgentLabel}
-				isUpdateAvailable={isUpdateAvailable}
 				availableAgents={config?.agent ? undefined : availableAgents}
 				currentAgentId={session.agentId}
 				onAgentChange={

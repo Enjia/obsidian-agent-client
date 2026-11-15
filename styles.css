@@ -726,20 +726,6 @@ If your plugin does not need CSS, delete this file.
 	white-space: nowrap;
 }
 
-.agent-client-chat-view-header-update {
-	flex: 0 1 auto;
-	padding: 2px 8px;
-	font-size: 11px;
-	color: var(--text-muted);
-	background-color: var(--background-modifier-hover);
-	border-radius: 4px;
-	font-weight: 500;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	min-width: 0;
-}
-
 /* ===== Inline Header (Floating/CodeBlock) ===== */
 .agent-client-inline-header {
 	display: flex;

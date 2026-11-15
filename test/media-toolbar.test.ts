@@ -23,7 +23,6 @@ it("provides separate sidebar toolbar buttons for media and subscriptions", asyn
 				createElement(ChatHeader, {
 					variant: "sidebar",
 					agentLabel: "Codex",
-					isUpdateAvailable: false,
 					onNewChat: vi.fn(),
 					onExportChat: vi.fn(),
 					onShowMenu: vi.fn(),
